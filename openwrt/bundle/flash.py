@@ -167,14 +167,14 @@ def package_profile():
         return None  # Legacy E5 packages did not carry a profile manifest.
     with open(path, encoding='utf-8') as stream:
         value = json.load(stream)
-    if value.get('profile') not in ('e5', 't551m', 'm8') or not value.get('android_models'):
+    if value.get('profile') not in ('e5', 't551m', 'm8', 't512n') or not value.get('android_models'):
         die('invalid package device profile')
     return value
 
 
 def default_hotspot_name():
     profile = package_profile()
-    model = {'e5': 'E5', 't551m': 'T551M', 'm8': 'M8'}[
+    model = {'e5': 'E5', 't551m': 'T551M', 'm8': 'M8', 't512n': 'T512N'}[
         profile['profile'] if profile else 'e5']
     return model + '-OpenWrt'
 
@@ -310,7 +310,9 @@ def su_checked(stage, cmd, timeout=600, effect=None):
         GUI.stage('transfer_install' if effect.startswith('root') else 'prepare')
         return GUI.action(effect, lambda: su_checked(stage, cmd, timeout))
     marker = '__E5_STAGE_STATUS__='
-    wrapped = f'(set -e; {cmd}); e5_stage_rc=$?; echo {marker}$e5_stage_rc'
+    # Commands such as head -c on a prepared partition end in NUL padding,
+    # not a newline. Keep the completion record on its own line regardless.
+    wrapped = f'(set -e; {cmd}); e5_stage_rc=$?; echo; echo {marker}$e5_stage_rc'
     try:
         out = su(wrapped, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -474,11 +476,16 @@ def android_checks():
     if SERIAL: devs = [line for line in devs if line.split()[0] == SERIAL]
     if len(devs) != 1:
         die(f'need one selected device (found {len(devs)}); use --serial SERIAL and allow USB debugging / 请用 --serial 指定设备，并允许调试')
-    for s in ('su', '/debug_ramdisk/su', '/sbin/su'):
-        if 'uid=0' in sh(f'{s} -c id'):
-            SU = s
-            break
-    if not SU:
+    # Engineering Android may already run adbd as root. Its AOSP su uses
+    # positional UIDs, so probing only Magisk's `su -c` rejects a valid session.
+    if sh('id -u').strip() == '0':
+        SU = ''
+    else:
+        for s in ('su', '/debug_ramdisk/su', '/sbin/su'):
+            if re.search(r'\buid=0\b', sh(f'{s} -c id')):
+                SU = s
+                break
+    if SU is None:
         die('no root: grant Shell superuser access in Magisk or KernelSU/KSUNext')
     profile = package_profile()
     if profile:
@@ -487,12 +494,14 @@ def android_checks():
             die(f"Wrong device: package is for {profile['profile']}, Android reports {model!r}. Nothing was written.")
     if sh('getprop ro.boot.slot_suffix').strip() != '_a':
         die('Android is not running from slot a')
-    if sh('getprop ro.boot.verifiedbootstate').strip() != 'orange':
+    # T512N engineering firmware reports green/locked but the owner confirmed
+    # it accepts the replacement boot payload without an unlock/reset.
+    if (not profile or profile['profile'] != 't512n') and sh('getprop ro.boot.verifiedbootstate').strip() != 'orange':
         die('the bootloader is locked (verifiedbootstate is not orange)')
     if 'ok' not in su('[ -e /dev/block/by-name/boot_b ] && [ -e /dev/block/by-name/l_agdsp_a ] && echo ok'):
         die('no boot_b or l_agdsp_a partition: not an E5?')
     android_tools()
-    print(f'   ok ({sh("getprop ro.product.model").strip()}, root via {SU})')
+    print(f'   ok ({sh("getprop ro.product.model").strip()}, root via {SU or "adbd"})')
 
 
 # ------------------------------------------------------ the device's files

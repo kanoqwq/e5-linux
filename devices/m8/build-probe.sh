@@ -1,6 +1,8 @@
 #!/bin/bash
 # Bounded hardware probe only; not a production/full-feature firmware.
 set -euo pipefail
+# Shared config disables automatic SCM suffixes; suppress the fallback '+' too.
+export LOCALVERSION=
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/../.." && pwd)
 K=${M8_KERNEL:?Set M8_KERNEL to a separate pinned linux-lts-e5 worktree}

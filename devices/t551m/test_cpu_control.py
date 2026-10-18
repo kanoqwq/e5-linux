@@ -303,11 +303,19 @@ class VoltageFirmwareTest(unittest.TestCase):
     def test_old_negative_cache_is_rechecked_and_new_cache_is_used(self):
         self.control.runtime.mkdir(parents=True)
         (self.control.runtime / 'voltage-supported').write_text('0')
+        (self.control.runtime / 'voltage-supported-v3').write_text('0')
         digest = next(iter(module.VERIFIED_VOLTAGE_FIRMWARE))
         self.assertTrue(self.check_hashes([digest, digest]))
         with patch.object(module.hashlib, 'sha256') as sha:
             self.assertTrue(self.control.voltage_supported())
             sha.assert_not_called()
+
+    def test_t512n_firmware_is_not_accepted_on_ums9620(self):
+        digest = 'b0beb84a18b4d823bf62ec1ea36a46b960b5ea0a54433d449d8a007968879075'
+        self.assertTrue(self.check_hashes([digest, digest]))
+        self.compatible.write_bytes(b'sprd,ums512-base\0sprd,ums9620\0')
+        (self.control.runtime / module.VOLTAGE_CAPABILITY_CACHE).unlink()
+        self.assertFalse(self.check_hashes([digest, digest]))
 
 
 if __name__=='__main__':

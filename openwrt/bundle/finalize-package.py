@@ -11,7 +11,7 @@ import shutil
 import zipfile
 
 HERE = Path(__file__).resolve().parent
-MODELS = {'e5': 'E5', 't551m': 'T551M', 'm8': 'VIPME M8'}
+MODELS = {'e5': 'E5', 't551m': 'T551M', 'm8': 'VIPME M8', 't512n': 'T512N'}
 
 
 def digest(path):
@@ -83,7 +83,7 @@ def finalize(package, profile, bootctl):
         'description=ERASES THE SELECTED TF PARTITION (or unpartitioned card) and deploys OpenWrt. Android userdata is preserved. Reboot manually.\n',
         encoding='utf-8', newline='\n')
     values = {'PROFILE': profile, 'ANDROID_MODEL': MODELS[profile],
-              'DEFAULT_SSID': {'e5': 'E5', 't551m': 'T551M', 'm8': 'M8'}[profile] + '-OpenWrt',
+              'DEFAULT_SSID': {'e5': 'E5', 't551m': 'T551M', 'm8': 'M8', 't512n': 'T512N'}[profile] + '-OpenWrt',
               'RAW_BYTES': str(size), 'RAW_SHA256': raw_hash.hexdigest(),
               'BOOT_BYTES': str((files / 'boot.img').stat().st_size), 'BOOT_SHA256': boot['sha256']}
     (files / 'tf-install.env').write_text(''.join(k + '=' + shlex.quote(v) + '\n' for k, v in values.items()), newline='\n')

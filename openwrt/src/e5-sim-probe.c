@@ -16,6 +16,22 @@ static long long milliseconds(void) {
  struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
  return (long long)t.tv_sec*1000+t.tv_nsec/1000000;
 }
+static int final_response(const char *reply) {
+ const char *line=reply,*end;
+ /* SIPC reads can split anywhere, including between "+CME ERROR:" and 10.
+  * A prefix alone is not a final response: wait for its terminating newline. */
+ while((end=strchr(line,'\n'))) {
+  const char *start=line,*tail=end;
+  while(start<tail && *start=='\r')start++;
+  while(tail>start && tail[-1]=='\r')tail--;
+  size_t len=(size_t)(tail-start);
+  if((len==2 && !memcmp(start,"OK",2)) ||
+     (len==5 && !memcmp(start,"ERROR",5)) ||
+     (len>11 && !memcmp(start,"+CME ERROR:",11)))return 1;
+  line=end+1;
+ }
+ return 0;
+}
 static int query(int fd,const char *command,char *reply,size_t size,int timeout) {
  size_t used=0;long long due=milliseconds()+timeout;
  reply[0]=0;
@@ -27,7 +43,7 @@ static int query(int fd,const char *command,char *reply,size_t size,int timeout)
   ssize_t n=read(fd,reply+used,size-used-1);
   if(n<=0){if(errno==EAGAIN||errno==EINTR)continue;return -1;}
   used+=(size_t)n;reply[used]=0;
-  if(strstr(reply,"\nOK")||strstr(reply,"\nERROR")||strstr(reply,"+CME ERROR:"))return 0;
+  if(final_response(reply))return 0;
  }
  return -1;
 }

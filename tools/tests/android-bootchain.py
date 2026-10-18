@@ -136,6 +136,18 @@ class Transaction(unittest.TestCase):
         self.props.write_text('ro.boot.slot_suffix=_a\nro.boot.verifiedbootstate=green\n')
         self.refused()
 
+    def test_t512n_engineering_green_check_is_read_only(self):
+        self.props.write_text('ro.product.model=T512N\nro.boot.slot_suffix=_a\nro.boot.verifiedbootstate=green\n')
+        for shell in SHELLS:
+            result = self.run_script('check', shell)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.snapshot(), self.original)
+            self.assertFalse(self.backups.exists())
+
+    def test_e5_green_still_refused(self):
+        self.props.write_text('ro.product.model=E5\nro.boot.slot_suffix=_a\nro.boot.verifiedbootstate=green\n')
+        self.refused()
+
     def test_partition_size_mismatch(self):
         (self.by / 'sml_b').write_bytes(b'short')
         self.refused()

@@ -175,11 +175,24 @@ def worker(job_id):
             return
         # e5-sim serializes with SMS transactions, persists the selection,
         # restarts the existing modem interface and applies its automatic APN.
+        deadline = time.monotonic() + 180
         result = subprocess.run([SWITCH, job['target']], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True, timeout=180)
         if result.returncode:
             raise RuntimeError(result.stderr.strip()[-300:] or 'System SIM switch failed')
-        if current() != job['target'] or saved() != job['target']:
+        # rc.common starts the WWAN instance asynchronously. The switch tool
+        # can return while the old module is gone and the new card parameter
+        # does not exist yet. Wait only for that reload window, within the
+        # existing operation budget; a ready but wrong selection still fails.
+        while True:
+            try:
+                selected = current()
+                break
+            except FileNotFoundError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('WWAN interface did not return after SIM switch')
+                time.sleep(.1)
+        if selected != job['target'] or saved() != job['target']:
             raise RuntimeError('Data SIM did not match the saved selection; refresh actual state')
         job.update(ok=True, state='done')
     except BlockingIOError:

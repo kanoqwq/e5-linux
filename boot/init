@@ -17,6 +17,7 @@
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root TERM=vt100
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
+. /etc/boot-args.sh
 # 4, not 7: at 7 each info line costs ~10 ms of synchronous serial console
 # output in whoever printed it, and the module-loading phase prints ~2000 of
 # them (~20 s of boot time, measured 2026-10-12 on T551M). The E5-LINUX:
@@ -719,7 +720,7 @@ part_root() {
 # system removes it once it is up (e5-boot-ok).  A failed trial, a missing
 # partition or an unreadable one drops the choice for this boot only -- the
 # chain below (card, then image) still gets its turn.
-grep -q ' e5.root=part\( \|$\)' /proc/cmdline && want=part
+[ "$(boot_arg e5.root)" = part ] && want=part
 if [ -f /run/part-default ] && [ -z "$SDMETA" ] && { [ -z "$want" ] || [ "$want" = part ]; }; then
     want=part
 fi

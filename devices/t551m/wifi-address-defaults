@@ -2,7 +2,7 @@
 # The vendor driver leaves wiphy's permanent address zero. netifd otherwise
 # gives hostapd an all-zero BSSID, while the firmware uses a different address.
 # Keep one valid interface address in UCI; never replace an explicit user MAC.
-case "$(cat /etc/e5/device-profile 2>/dev/null)" in t551m|e5|m8) ;; *) exit 0 ;; esac
+case "$(cat /etc/e5/device-profile 2>/dev/null)" in t551m|e5|m8|t512n) ;; *) exit 0 ;; esac
 . /lib/functions.sh
 pending=0
 seen=0

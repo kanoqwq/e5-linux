@@ -2,7 +2,7 @@
 # Userdata is never read/mounted. The stock recovery owns formatting/encryption.
 part_prepare() {
     local request token cid node start previous target need bc extra dev disk u root_start mark actual rc part_rejected
-    request=$(sed -n 's/.* e5.part_prepare=\([^ ]*\).*/\1/p' /proc/cmdline)
+    request=$(boot_arg e5.part_prepare)
     [ -n "$request" ] || return 0
     . /etc/part-progress.sh
     part_progress_start

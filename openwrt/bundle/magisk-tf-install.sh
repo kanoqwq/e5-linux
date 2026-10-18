@@ -20,7 +20,11 @@ preflight() {
     [ "$(id -u)" = 0 ] || fail 'root required'
     [ "$(getprop ro.product.model)" = "$ANDROID_MODEL" ] || fail 'wrong device model for this package'
     [ "$(getprop ro.boot.slot_suffix)" = _a ] || fail 'Android A / OpenWrt B only'
-    [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'bootloader must be unlocked'
+    # T512N/PB8 engineering firmware accepts a replacement boot while reporting
+    # green/locked. Keep all existing models' preflight behavior unchanged.
+    if [ "${PROFILE:-}" != t512n ]; then
+        [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'bootloader must be unlocked'
+    fi
     [ -s "$P/files/ext4-tools.tar" ] || fail 'missing bundled ext4 tools'
     tar -tf "$P/files/ext4-tools.tar" > "$STATE/ext4-tools.list"
     for tool in lib/ld-musl-aarch64.so.1 usr/sbin/e2fsck usr/sbin/resize2fs ext4-geometry.sh SHA256SUMS; do

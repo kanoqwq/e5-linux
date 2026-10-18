@@ -49,7 +49,8 @@ class TwoStage(unittest.TestCase):
             tool.write_text('#!/bin/sh\necho "$2" >> "'+str(root/'calls')+'"\n'
                             'if [ "$2" = list ]; then echo "71 8390656 16779263 e5root"; fi\n')
             tool.chmod(0o755)
-            code=(TOP/'boot/part-prepare.sh').read_text().replace('[ -b ', '[ -f ')
+            code=((TOP/'boot/boot-args.sh').read_text()+'\n'+
+                  (TOP/'boot/part-prepare.sh').read_text()).replace('[ -b ', '[ -f ')
             for prefix in ('/etc','/sys','/proc','/dev','/run','/usr/bin'):
                 code=code.replace(prefix+'/', str(root)+prefix+'/')
             code=code.replace(str(root)+'/dev/zero', '/dev/zero').replace(str(root)+'/dev/null', '/dev/null')

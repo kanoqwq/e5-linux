@@ -21,7 +21,7 @@ import time
 import zipfile
 
 TOP = Path(__file__).resolve().parents[1]
-MODELS = {'e5': ['E5'], 't551m': ['T551M'], 'm8': ['VIPME M8']}
+MODELS = {'e5': ['E5'], 't551m': ['T551M'], 'm8': ['VIPME M8'], 't512n': ['T512N']}
 
 
 def digest(path):
@@ -177,9 +177,11 @@ def main():
     run('python3', TOP / 'boot/build-boot-image.py', '--stock-boot', a.stock_boot,
         '--misc-head', a.misc_head, '--kernel', a.kernel / 'Image.lk',
         '--modules', a.kernel / 'modules', '--module-order', a.kernel / 'module-order.txt',
-        '--busybox', a.busybox, '--init', init, '--cmdline', '', '--out', files / 'boot.img')
+        '--busybox', a.busybox, '--init', init, '--cmdline',
+        'e5.lkpad=0000000000' if a.profile == 't512n' else '', '--out', files / 'boot.img')
     boot = json.loads((files / 'boot.json').read_text())
-    assert boot['overlay_files'] == 0 and boot['cmdline'] == 'e5.part_v=2'
+    expected_command = ('e5.lkpad=0000000000 ' if a.profile == 't512n' else '') + 'e5.part_v=2'
+    assert boot['overlay_files'] == 0 and boot['cmdline'] == expected_command
     (files / 'boot.misc-slot-b-trial.bin').rename(files / 'boot-misc-slot-b.bin')
     sources = {}
     # Includes uncommitted source fixes, so HEAD alone cannot misidentify a build.

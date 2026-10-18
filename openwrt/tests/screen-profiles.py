@@ -6,7 +6,7 @@ import tempfile
 repo = Path(__file__).resolve().parents[2]
 screen = runpy.run_path(str(repo/'devices/t551m/infoscreen/stage.py'))['stage']
 with tempfile.TemporaryDirectory() as tmp:
-    for profile in ('t551m', 'e5', 'm8'):
+    for profile in ('t551m', 'e5', 'm8', 't512n'):
         root = Path(tmp)/profile
         (root/'etc/e5').mkdir(parents=True)
         (root/'etc/e5/device-profile').write_text(profile+'\n')
@@ -23,4 +23,4 @@ with tempfile.TemporaryDirectory() as tmp:
         assert b'T551MTransport' in (root/'usr/share/e5-infoscreen/www/sdk/e5.js').read_bytes()
         assert b'T551MCalls.subscribe' in (root/'etc/e5-infoscreen/plugins/phone/phone.js').read_bytes()
         assert (root/'etc/e5/device-profile').read_text().strip() == profile
-print('E5/T551M/M8 shared event/read transport and charger wake PASS')
+print('E5/T551M/M8/T512N shared event/read transport and charger wake PASS')

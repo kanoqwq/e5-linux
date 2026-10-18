@@ -20,6 +20,7 @@ class ScreenPowerTest(unittest.TestCase):
             p.parent.mkdir(parents=True)
             p.write_text('0\n')
         (self.touch.parent / 'name').write_text('tlsc6x_touch\n')
+        (self.touch.parent / 'properties').write_text('2\n')
         self.sys = patch.object(power, 'SYS', self.root)
         self.lock = patch.object(power, 'LOCK', self.root / 'power.lock')
         self.sys.start(); self.lock.start()
@@ -34,6 +35,15 @@ class ScreenPowerTest(unittest.TestCase):
             power.reconcile(180, True)
             self.assertEqual(self.touch.read_text().strip(), '0')
             self.assertEqual(self.bl.read_text().strip(), '180')
+
+    def test_direct_panel_discovery_is_independent_of_driver_name(self):
+        for name in ('tlsc6x_touch', 'fts_ts', 'generic ft5x06 (79)'):
+            (self.touch.parent / 'name').write_text(name + '\n')
+            self.assertEqual(power.devices()[1], [self.touch])
+        # An indirect pointing device is not a panel, even with the donor name.
+        (self.touch.parent / 'properties').write_text('0\n')
+        with self.assertRaises(RuntimeError):
+            power.devices()
 
     def test_explicit_touch_off_survives_wake(self):
         power.reconcile(0, False)

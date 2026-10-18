@@ -79,7 +79,11 @@ case ${1:-} in check|sync) mode=$1 ;; *) fail 'usage: android-bootchain.sh check
 [ "$(id -u)" = 0 ] || fail 'root required'
 command -v getprop >/dev/null 2>&1 || fail 'run from Android only'
 [ "$(getprop ro.boot.slot_suffix)" = _a ] || fail 'this boot/runtime supports Android A and Linux B only'
-[ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'unlocked bootloader required'
+# This engineering T512N accepts our verified B-slot images while reporting
+# green/locked. Keep the unlocked requirement for the existing production boards.
+if [ "$(getprop ro.product.model)" != T512N ]; then
+    [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'unlocked bootloader required'
+fi
 for part in misc boot_a boot_b l_agdsp_a; do [ -b "$BY/$part" ] || fail "missing block device: $part"; done
 mkdir "$LOCK" 2>/dev/null || fail 'another boot-chain operation is active (or its lock needs inspection)'
 locked=1

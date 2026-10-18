@@ -63,6 +63,17 @@ class DataSim(unittest.TestCase):
         self.assertFalse((self.root / 'invoked').exists())
         self.assertFalse(self.call('status', '../invalid')['ok'])
 
+    def test_async_wwan_reload_does_not_report_missing_sysfs_as_failure(self):
+        self.script('switch', '''
+printf %s "$1" > "$TEST_ROOT/saved"
+rm "$TEST_ROOT/card"
+(sleep .4; printf %s "$1" > "$TEST_ROOT/card") >/dev/null 2>&1 &
+''')
+        result = self.wait(self.request())
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['state'], 'done')
+        self.assertEqual(self.call('get')['data_sim'], 1)
+
     def test_duplicate_is_rejected_while_worker_owns_lock(self):
         job = self.request()
         other = self.request()

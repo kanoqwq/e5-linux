@@ -18,6 +18,47 @@ spec.loader.exec_module(flash)
 
 
 class RootTools(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('sh'), 'shell execution required')
+    def test_stage_status_after_binary_padding_or_missing_newline(self):
+        def adb(*args, **kwargs):
+            self.assertEqual(args[0], 'shell')
+            r = subprocess.run(['sh', '-c', args[1]], capture_output=True, text=True)
+            return r.stdout
+        for command, expected in (("printf 'plain'", 'plain'),
+                                  ("printf 'E5-PART-PREPARED-V2 token\\n\\000\\000'", 'E5-PART-PREPARED-V2 token\n\0\0')):
+            with self.subTest(command=command), patch.object(flash, 'SU', None), \
+                    patch.object(flash, 'ANDROID_BUSYBOX', None), patch.object(flash, 'adb', side_effect=adb):
+                self.assertEqual(flash.su_checked('fixture', command), expected)
+
+    def test_android_root_preflight_accepts_adbd_and_manager_root(self):
+        for uid, manager in (('0', None), ('2000', 'su'), ('2000', '/debug_ramdisk/su'), ('2000', None)):
+            with self.subTest(uid=uid, manager=manager):
+                calls = []
+                def shell(command):
+                    calls.append(command)
+                    if command == 'id -u': return uid
+                    if command.endswith(' -c id'):
+                        return 'uid=0(root)' if command == f'{manager} -c id' else 'invalid uid'
+                    return {'getprop ro.product.model': 'T512N',
+                            'getprop ro.boot.slot_suffix': '_a',
+                            'getprop ro.boot.verifiedbootstate': 'green'}.get(command, '')
+                with patch.object(flash, 'SERIAL', 'fixture'), patch.object(flash, 'SU', None), \
+                        patch.object(flash, 'ANDROID_BUSYBOX', None), \
+                        patch.object(flash, 'adb', return_value='List of devices attached\nfixture\tdevice\n'), \
+                        patch.object(flash, 'sh', side_effect=shell), \
+                        patch.object(flash, 'su', return_value='ok'), \
+                        patch.object(flash, 'package_profile', return_value={'profile': 't512n', 'android_models': ['T512N']}), \
+                        patch.object(flash, 'android_tools') as tools, \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    if uid != '0' and manager is None:
+                        with self.assertRaises(SystemExit): flash.android_checks()
+                        tools.assert_not_called()
+                    else:
+                        flash.android_checks()
+                        self.assertEqual(flash.SU, '' if uid == '0' else manager)
+                        tools.assert_called_once()
+                        if uid == '0': self.assertFalse(any(' -c id' in command for command in calls))
+
     def test_reject_dynamic_wrong_arch_and_truncated_elf(self):
         with tempfile.TemporaryDirectory() as folder:
             p = Path(folder)/'busybox'

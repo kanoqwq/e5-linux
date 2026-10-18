@@ -35,7 +35,7 @@ class Routing(unittest.TestCase):
                                        env=self.env, text=True).strip()
 
     def test_scoped_queries_and_controls_use_selected_owner(self):
-        for profile in ('t551m', 'e5', 'm8'):
+        for profile in ('t551m', 'e5', 'm8', 't512n'):
             self.profile.write_text(profile + '\n')
             for slot in (0, 1):
                 for suffix in ('+CFUN?', '+CFUN=4', '+CSCS?;+COPS?',

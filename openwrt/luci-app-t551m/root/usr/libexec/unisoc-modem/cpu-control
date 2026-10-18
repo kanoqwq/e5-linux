@@ -16,11 +16,14 @@ import time
 VERIFIED_VOLTAGE_FIRMWARE = frozenset({
     'c3ab5b763cbcfd09d1a4e8f598ed703c739a2081682f8278276dba4581cd1c44',
     '51ab807ce7c13795e134031b81f6f6b904da38a771c166ce4e279f93dac72890',
+    # T512N/PB8 512NCA05: decoder, paired CPU/SRAM tables and selector
+    # arithmetic verified from this device's SML; devices/t512n/CPU-POWER.zh-CN.md.
+    'b0beb84a18b4d823bf62ec1ea36a46b960b5ea0a54433d449d8a007968879075',
 })
 VERIFIED_M8_VOLTAGE_FIRMWARE = frozenset({
     '31425dab4aca8450757ac4207de419d06643b7204776fc7e8da5aab1d68814df',
 })
-VOLTAGE_CAPABILITY_CACHE = 'voltage-supported-v3'
+VOLTAGE_CAPABILITY_CACHE = 'voltage-supported-v4'
 
 
 def read(path, default=''):

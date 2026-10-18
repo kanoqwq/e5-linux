@@ -12,7 +12,7 @@ import time
 TOP = Path(__file__).resolve().parents[2]
 
 
-def check(binary, preferred, responses, expected, delayed=False):
+def check(binary, preferred, responses, expected, delayed=False, error_split=None):
     master, slave = pty.openpty()
     port = binary.parent / 'late-port' if delayed else os.ttyname(slave)
     process = subprocess.Popen([str(binary), str(port), str(preferred)],
@@ -40,9 +40,11 @@ def check(binary, preferred, responses, expected, delayed=False):
                     response = '+CFUN: 0\r\n\r\nOK'
                 # Fragment a response to exercise stream parsing rather than packet assumptions.
                 data = ('\r\n' + response + '\r\n').encode()
-                os.write(master, data[:3])
-                time.sleep(.005)
-                os.write(master, data[3:])
+                split = (data.index(b'+CME ERROR:') + error_split
+                         if error_split is not None and b'+CME ERROR:' in data else 3)
+                os.write(master, data[:split])
+                time.sleep(.08 if error_split is not None else .005)
+                os.write(master, data[split:])
         stdout, stderr = process.communicate(timeout=1)
         assert process.returncode == 0, stderr
         assert stdout.strip() == str(expected), (stdout, stderr)
@@ -73,4 +75,9 @@ if __name__ == '__main__':
         for preferred, responses, expected in cases:
             check(binary, preferred, responses, expected)
         check(binary, 0, [absent, present], 1, delayed=True)
-    print('SIM probe checks passed: both single slots, preference, empty, locked, unknown, read-only AT')
+        # Do not mistake an incomplete error prefix/code for absence or unknown.
+        # It used to leave SIM1 unknown and select the empty preferred slot.
+        for split in (11, 13):  # after ':', or between '1' and '0'
+            check(binary, 0, [absent, present], 1, error_split=split)
+            check(binary, 1, [present, absent], 0, error_split=split)
+    print('SIM probe checks passed: both slots, preference, empty, locked, unknown, delayed port, split error codes')

@@ -130,7 +130,7 @@ run_modes() {
 
     def test_pdp_retry_shared_across_profiles(self):
         path = self.root / 'lib/netifd/proto/modemmanager.sh'
-        for profile in ('e5', 't551m', 'm8'):
+        for profile in ('e5', 't551m', 'm8', 't512n'):
             with self.subTest(profile=profile):
                 path.write_text(PROTO)
                 patch_root(self.root, profile)

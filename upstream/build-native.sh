@@ -9,6 +9,8 @@
 #   E5_OUTDIR      the object directory (default: work/build/<kernelversion>, kept between builds)
 #   E5_RELEASE=1   the kernel of a flash package, as build.sh: no e5.openwrt=, into upstream/out-release
 set -eo pipefail
+# Apply the same version policy to Image, modules and modules_install.
+export LOCALVERSION=
 command -v pahole >/dev/null || { echo 'BTF requires pahole (Ubuntu: apt install pahole)' >&2; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TOP="$(cd "$HERE/.." && pwd)"
@@ -40,7 +42,7 @@ O="${E5_OUTDIR:-$TOP/work/build/$KV}"
 mkdir -p "$O"
 O=$(cd "$O" && pwd)
 echo "== linux-lts-e5 $KV, $(git log --oneline -1)"
-[ -z "$(git status --porcelain --untracked-files=no)" ] || echo "   (the tree has uncommitted changes: the release gets -dirty)"
+[ -z "$(git status --porcelain --untracked-files=no)" ] || echo "   (kernel source contains local changes)"
 
 CFG=$HERE/e5-mainline.config DEST=$HERE/out
 if [ -n "${E5_RELEASE:-}" ]; then

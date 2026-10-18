@@ -198,6 +198,7 @@ def main():
         files[name] = ((a.f2fs_tools / name).read_bytes(), stat.S_IFREG | 0o755)
     files['etc/install-part.sh'] = ((HERE / 'install-part.sh').read_bytes(), stat.S_IFREG | 0o644)
     files['etc/part-progress.sh'] = ((HERE / 'part-progress.sh').read_bytes(), stat.S_IFREG | 0o644)
+    files['etc/boot-args.sh'] = ((HERE / 'boot-args.sh').read_bytes(), stat.S_IFREG | 0o644)
     files['etc/part-prepare.sh'] = ((HERE / 'part-prepare.sh').read_bytes(), stat.S_IFREG | 0o644)
     files['etc/part-update.sh'] = ((HERE / 'part-update.sh').read_bytes(), stat.S_IFREG | 0o644)
     files['usr/share/e5-gpt'] = ((HERE.parent / 'openwrt/overlay/usr/libexec/e5-gpt').read_bytes(),

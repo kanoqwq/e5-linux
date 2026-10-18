@@ -12,11 +12,14 @@ TOP=Path(__file__).resolve().parents[2]
 
 class Preflight(unittest.TestCase):
     def test_geometry_helper_is_required_before_boot_or_card_operations(self):
-        for include in (False,True):
-            with self.subTest(include=include),tempfile.TemporaryDirectory() as directory:
+        for include,profile,verified,allowed in (
+                (False,'e5','orange',True), (True,'e5','orange',True),
+                (True,'t512n','green',True), (True,'e5','green',False)):
+            with self.subTest(include=include,profile=profile,verified=verified),tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);package=root/'package';state=root/'state'
                 (package/'files').mkdir(parents=True);state.mkdir()
-                (package/'files/tf-install.env').write_text('ANDROID_MODEL=E5\nBOOT_BYTES=4096\n')
+                model = 'T512N' if profile == 't512n' else 'E5'
+                (package/'files/tf-install.env').write_text(f'PROFILE={profile}\nANDROID_MODEL={model}\nBOOT_BYTES=4096\n')
                 node=root/'dev/block/by-name';node.mkdir(parents=True)
                 for n in ('boot_b','misc'):(node/n).touch()
                 script=(TOP/'openwrt/bundle/magisk-tf-install.sh').read_text()
@@ -29,18 +32,20 @@ class Preflight(unittest.TestCase):
                 stop=package/'files/e5-bootctl'
                 stop.write_text('#!/bin/sh\ntouch "$STATE/reached-boot-check"\nexit 21\n');stop.chmod(0o755)
                 code='''id(){ echo 0; }
-getprop(){ case "$1" in ro.product.model) echo E5;; ro.boot.slot_suffix) echo _a;; ro.boot.verifiedbootstate) echo orange;; esac; }
+getprop(){ case "$1" in ro.product.model) echo "$TEST_MODEL";; ro.boot.slot_suffix) echo _a;; ro.boot.verifiedbootstate) echo "$TEST_VERIFIED";; esac; }
 sha256sum(){ return 0; }
 blockdev(){ echo 4096; }
 '''+script+'\npreflight\n'
                 # Library loading returns before main; the appended preflight is explicit.
                 fixture=root/'library.sh';fixture.write_text(code)
                 harness='. "$LIB"; preflight'
-                env=dict(os.environ,LIB=str(fixture),E5_TF_LIB='1',P=str(package),STATE=str(state))
+                env=dict(os.environ,LIB=str(fixture),E5_TF_LIB='1',P=str(package),STATE=str(state),TEST_MODEL=model,TEST_VERIFIED=verified)
                 result=subprocess.run(['busybox','ash','-ec',harness],env=env,capture_output=True,text=True)
                 self.assertNotEqual(result.returncode,0)
-                self.assertEqual((state/'reached-boot-check').exists(),include,result.stdout+result.stderr)
-                self.assertEqual('missing ext4 tool: ext4-geometry.sh' in result.stderr,not include)
+                self.assertEqual((state/'reached-boot-check').exists(),include and allowed,result.stdout+result.stderr)
+                self.assertEqual('missing ext4 tool: ext4-geometry.sh' in result.stderr,not include and allowed)
+                if not allowed:
+                    self.assertIn('bootloader must be unlocked',result.stderr)
 
 
 if __name__=='__main__':unittest.main()

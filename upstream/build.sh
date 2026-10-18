@@ -11,6 +11,9 @@
 #                 boot; into upstream/out-release/, so that the trial scripts (upstream/out/) never take it
 # The objects stay in the docker volume e5-mainline-out (a bind mount would be slower), per kernel release.
 set -eo pipefail
+# With LOCALVERSION_AUTO disabled, an explicit empty value also suppresses '+'.
+# Keep this in the container too, including modules_install invocations.
+export LOCALVERSION=
 if [ -z "${E5_IN_CONTAINER:-}" ]; then
     HERE="$(cd "$(dirname "$0")" && pwd)"
     K="${E5_KERNEL_TREE:-$HERE/../linux-lts-e5}"
@@ -42,7 +45,7 @@ KV=$(make -s kernelversion)
 O=/out/$KV
 mkdir -p "$O"
 echo "== linux-lts-e5 $KV, $(git log --oneline -1)"
-[ -z "$(git status --porcelain --untracked-files=no)" ] || echo "   (the tree has uncommitted changes: the release gets -dirty)"
+[ -z "$(git status --porcelain --untracked-files=no)" ] || echo "   (kernel source contains local changes)"
 
 CFG=/work/e5-mainline.config DEST=/work/out
 if [ -n "${E5_RELEASE:-}" ]; then

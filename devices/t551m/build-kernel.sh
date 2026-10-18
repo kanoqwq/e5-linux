@@ -2,6 +2,8 @@
 # Linux host/WSL. Keep source and objects on a native Linux filesystem.
 # T551M_RELEASE=1 omits the forced userdata path for TF/partition installers.
 set -euo pipefail
+# Shared config disables automatic SCM suffixes; suppress the fallback '+' too.
+export LOCALVERSION=
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/../.." && pwd)
 K=${T551M_KERNEL:?Set T551M_KERNEL to a linux-lts-e5 checkout}

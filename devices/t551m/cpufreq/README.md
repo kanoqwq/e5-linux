@@ -42,6 +42,9 @@ Verified SML images (both slots must contain the same image, 1 MiB including its
 
 - T551M: `c3ab5b763cbcfd09d1a4e8f598ed703c739a2081682f8278276dba4581cd1c44`.
 - E5: `51ab807ce7c13795e134031b81f6f6b904da38a771c166ce4e279f93dac72890`.
+- T512N/PB8: `b0beb84a18b4d823bf62ec1ea36a46b960b5ea0a54433d449d8a007968879075`.
+  Its own decoder, paired CPU/SRAM tables and identical selector arithmetic
+  are documented in [the T512N CPU/power notes](../../t512n/CPU-POWER.zh-CN.md).
 
 The userspace gate checks the SoC and both firmware images before accepting any
 nonzero offset. Unknown firmware falls back to factory voltage. Nothing writes

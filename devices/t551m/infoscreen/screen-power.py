@@ -44,8 +44,14 @@ def touch_allowed():
 
 def devices():
     backlights = list((SYS / 'class/backlight').glob('*/brightness'))
-    touches = [p / 'inhibited' for p in (SYS / 'class/input').glob('input*')
-               if (p / 'name').read_text().strip() == 'tlsc6x_touch']
+    touches = []
+    for path in (SYS / 'class/input').glob('input*'):
+        try:
+            # INPUT_PROP_DIRECT identifies the panel independently of driver name.
+            if int((path / 'properties').read_text().strip(), 16) & 2 and (path / 'inhibited').exists():
+                touches.append(path / 'inhibited')
+        except (OSError, ValueError):
+            continue
     if not backlights or not touches:
         raise RuntimeError('Backlight or touch device missing')
     return backlights, touches

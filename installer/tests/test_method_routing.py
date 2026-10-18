@@ -71,6 +71,20 @@ class MethodRouting(unittest.TestCase):
                         self.assertNotIn('tf_bytes',device)
                         if method=='boot':a.read_gpt.assert_not_called()
 
+    def test_t512n_engineering_boot_state_does_not_relax_existing_profiles(self):
+        for profile,model,allowed in [('t512n','T512N',True),('e5','E5',False)]:
+            with self.subTest(profile=profile):
+                a=self.adapter()
+                properties=a.adb.properties()
+                properties.update({'ro.product.model':model,'ro.boot.verifiedbootstate':'green'})
+                a.adb.properties=Mock(return_value=properties)
+                a.legacy.package_profile.return_value={'profile':profile,'android_models':[model]}
+                if allowed:
+                    self.assertEqual(a.probe(SERIAL,'boot')['profile'],profile)
+                else:
+                    with self.assertRaisesRegex(ValueError,'unlocked'):
+                        a.probe(SERIAL,'boot')
+
     def test_reinstall_plan_on_device_without_card(self):
         for kind in ('e5','mu300'):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
