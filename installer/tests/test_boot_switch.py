@@ -51,6 +51,7 @@ class InstalledBoot(unittest.TestCase):
         order=[]
         api={name:Mock(side_effect=lambda *a,key=name:order.append(key)) for name in ('steps','find_adb','android_checks','bootchain','arm_slot_b','say','adb')}
         api['device_size']=Mock(return_value=size)
+        api['current_slots']=Mock(return_value=('a','b'))
         boot_installed_e5(api,Mock(side_effect=[header,tail]))
         self.assertEqual(order,['steps','find_adb','android_checks','bootchain','arm_slot_b','say','adb'])
         api['bootchain'].assert_called_once_with('check')
@@ -61,6 +62,7 @@ class InstalledBoot(unittest.TestCase):
         for bad_header,bad_chain in [(True,False),(False,True)]:
             api={name:Mock() for name in ('steps','find_adb','android_checks','bootchain','arm_slot_b','say','adb')}
             api['device_size']=Mock(return_value=size)
+            api['current_slots']=Mock(return_value=('a','b'))
             if bad_chain:api['bootchain'].side_effect=ValueError('chain mismatch')
             with self.assertRaises(ValueError):boot_installed_e5(api,Mock(side_effect=[bytes(4096) if bad_header else header,tail]))
             api['arm_slot_b'].assert_not_called();api['adb'].assert_not_called()

@@ -72,8 +72,10 @@ static void sim_swap_check(MMIfaceModem *m,GAsyncReadyCallback callback,gpointer
 '''
 tests = r'''
 int main(void){
- const char *valid[]={"3,0","3,2","3,100","3,4","3,1,2","3,1,34"," 3 , 1 , 25 ","3,1,1","3,1,7"};
- const char *bad[]={"","3","3,1","3,1,99","2,1,2","3,2junk","3,2,1,1","-3,2","3,-2","3,4294967296","3,1,-2"};
+ const char *valid[]={"3,0","3,2","3,100","3,4","3,1,2","3,1,34"," 3 , 1 , 25 ","3,1,1","3,1,7",
+                      "3,0,0,1"," 3 , 0 , 0 , 1 ","3,2,1,1","3,1,2,0,1"};
+ const char *bad[]={"","3","3,1","3,1,99","2,1,2","3,2junk","3,2,1,x","-3,2","3,-2","3,4294967296","3,1,-2",
+                    "3,0,0,1junk","3,0,0,-1","3,0,0,4294967296","3,0,0,","3,0,,1","3,1,99,0,1"};
  for(unsigned i=0;i<G_N_ELEMENTS(valid);i++)assert(sim_ecind_changed(valid[i]));
  for(unsigned i=0;i<G_N_ELEMENTS(bad);i++)assert(!sim_ecind_changed(bad[i]));
  MMBaseSim card={0};MMBaseModem modem={.sim=&card,.state=MM_MODEM_STATE_REGISTERED,.priv.sim_events_enabled=1};
@@ -98,6 +100,17 @@ int main(void){
  sim_check_request(&modem);sim_check_request(&modem);
  assert(queries==1 && modem.priv.sim_check_again);
  modem.priv.sim_events_enabled=0;sim_check_request(&modem);assert(queries==1);
+ /* Actual K1 insertion: 3,100 while busy, then extended ready 3,0,0,1.
+  * The busy query must not remove/reprobe; the later event must not be lost. */
+ modem=(MMBaseModem){.priv.sim_events_enabled=1,.state=MM_MODEM_STATE_FAILED};
+ queries=reprobes=parent_checks=0;
+ assert(sim_ecind_changed("3,100"));sim_check_request(&modem);assert(queries==1);
+ task=(GTask){0};sim_pin_checked(&modem,&inputs[0],&task);
+ assert(task.error==14 && !reprobes && !parent_checks);
+ modem.priv.sim_check_running=FALSE;
+ assert(sim_ecind_changed("3,0,0,1"));sim_check_request(&modem);assert(queries==2);
+ task=(GTask){0};sim_pin_checked(&modem,&inputs[2],&task);
+ assert(task.success && reprobes==1 && !parent_checks);
  puts("PASS: stock ECIND filtering, confirmed absence vs busy, no duplicate removal, event coalescing, unchanged boot path");
 }
 '''

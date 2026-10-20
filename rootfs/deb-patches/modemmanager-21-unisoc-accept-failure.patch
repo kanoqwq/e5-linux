@@ -1,0 +1,26 @@
+Description: Preserve Unisoc call identity when an accept command fails
+ A failed or ambiguous ATA result does not prove that the CP ended the call.
+ Retain the existing call object for the normal addressed CLCC snapshots,
+ while returning the original error to the explicit caller without retries.
+ Keep generic ModemManager behavior unchanged.
+Author: e5-linux
+Forwarded: no
+
+--- a/src/mm-base-call.c
++++ b/src/mm-base-call.c
+@@ -320,7 +320,14 @@
+     GError *error = NULL;
+ 
+     if (!MM_BASE_CALL_GET_CLASS (self)->accept_finish (self, res, &error)) {
+-        mm_base_call_change_state (self, MM_CALL_STATE_TERMINATED, MM_CALL_STATE_REASON_ERROR);
++        /* Unisoc may complete ATA in the CP even if its command result is
++         * rejected or ambiguous. Destroying this object loses an incoming
++         * call that subsequent CLCC reports ACTIVE. Do not repeat ATA or
++         * claim success: the existing card-scoped snapshots resolve state. */
++        if (g_object_get_data (G_OBJECT (ctx->modem), "e5-dual-sim-voice"))
++            mm_obj_warn (self, "accept failed; retaining call for CLCC state confirmation");
++        else
++            mm_base_call_change_state (self, MM_CALL_STATE_TERMINATED, MM_CALL_STATE_REASON_ERROR);
+         mm_dbus_method_invocation_take_error (ctx->invocation, error);
+         handle_accept_context_free (ctx);
+         return;

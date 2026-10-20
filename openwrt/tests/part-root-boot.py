@@ -23,7 +23,7 @@ def block():
     return text.replace('/sys/class/block', 'sys/class/block').replace('/sdtry', 'sdtry')
 
 
-HARNESS = '''
+HARNESS_SETUP = '''
 mounted=
 mount() {
     dev=; for a in "$@"; do case "$a" in /dev/*) dev=$a;; esac; done
@@ -34,7 +34,8 @@ mount() {
     mounted=1
 }
 umount() { echo "umount $1" >> activity; rm -rf sdtry; mounted=; }
-''' + block() + '''
+'''
+HARNESS = HARNESS_SETUP + block() + '''
 misc=/dev/mmcblk0p3
 PARTROOT= PARTTRIAL=
 if part_root; then echo "FOUND $PARTROOT TRIAL=${PARTTRIAL:-none}"; else echo NOTFOUND; fi
@@ -43,7 +44,7 @@ if part_root; then echo "FOUND $PARTROOT TRIAL=${PARTTRIAL:-none}"; else echo NO
 
 
 class PartRoot(unittest.TestCase):
-    def run_case(self, fixtures, contents=None):
+    def run_case(self, fixtures, contents=None, selection=None):
         with tempfile.TemporaryDirectory(prefix='part-root-') as tmp:
             root = Path(tmp)
             for name, files in fixtures.items():
@@ -61,7 +62,18 @@ class PartRoot(unittest.TestCase):
             (root / 'sys/class/block/mmcblk0p21/uevent').write_text('PARTNAME=userdata\n')
             (root / 'sys/class/block/mmcblk1p1').mkdir(parents=True)
             (root / 'sys/class/block/mmcblk1p1/uevent').write_text('PARTNAME=e5root\n')
-            result = subprocess.run(['sh', '-c', HARNESS], cwd=root,
+            harness = HARNESS
+            if selection is not None:
+                start = SOURCE.index('part_autoboot() {')
+                end = SOURCE.index('\n}\n', start) + 3
+                choose = SOURCE[start:end]
+                harness = HARNESS_SETUP + block() + choose + '''
+misc=/dev/mmcblk0p3
+e5_trial=$1 SDMETA=$2 want=$3
+if part_autoboot; then echo AUTO-PART; else echo NO-AUTO; fi
+[ -z "$mounted" ] || echo LEAKED-MOUNT
+'''
+            result = subprocess.run(['sh', '-c', harness, 'test', *(selection or [])], cwd=root,
                                     text=True, capture_output=True)
             assert result.returncode == 0, result.stderr
             activity = (root / 'activity').read_text() if (root / 'activity').exists() else ''
@@ -109,6 +121,31 @@ class PartRoot(unittest.TestCase):
             'mmcblk1p1': [],
         }, contents={'etc/e5/part-trial': '0'})
         self.assertIn('TRIAL=0', out)
+
+    def test_autoboot_without_early_wifi_or_firmware_probe(self):
+        fixtures = {'mmcblk0p20': ['sbin/init','etc/e5/part-root','etc/e5/part-autoboot']}
+        out, activity = self.run_case(fixtures, selection=['','',''])
+        self.assertIn('AUTO-PART', out)
+        self.assertNotIn('LEAKED-MOUNT', out)
+        self.assertEqual(activity.count('mount mmcblk0p20'),1)
+        # Root probing never needs the WCN loader, /run/part-default, a firmware
+        # payload, or a userdata root image.
+        self.assertNotIn('wcn_bsp', block())
+
+    def test_autoboot_keeps_explicit_choices_and_does_not_probe_them(self):
+        fixtures = {'mmcblk0p20': ['sbin/init','etc/e5/part-root','etc/e5/part-autoboot']}
+        for selection in (['image','',''],['','registered-sd',''],['','','sd'],['','','openwrt']):
+            with self.subTest(selection=selection):
+                out, activity = self.run_case(fixtures, selection=selection)
+                self.assertIn('NO-AUTO',out)
+                self.assertEqual(activity,'')
+
+    def test_unmarked_partition_does_not_become_default(self):
+        out, _ = self.run_case({'mmcblk0p20':['sbin/init','etc/e5/part-root']},selection=['','',''])
+        self.assertIn('NO-AUTO',out)
+
+    def test_probe_mount_does_not_replay_journal(self):
+        self.assertIn('ro,noload,noatime',block())
 
     def test_selection_arm_and_capability_are_wired(self):
         # the branch runs before the image path and only for boot-os=part; the

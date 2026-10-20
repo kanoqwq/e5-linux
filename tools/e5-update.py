@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import socket
 import struct
@@ -13,6 +14,28 @@ import sys
 import time
 import uuid
 GUI = None
+
+
+def bind_update_boot(image, manifest, fallback, linux_trial, helper):
+    if hashlib.sha256(image).hexdigest() != manifest['sha256']:
+        raise ValueError('Package boot checksum mismatch')
+    android = helper['validate_control'](fallback)
+    linux = 'b' if android == 'a' else 'a'
+    if (len(linux_trial) != 32 or linux_trial[:2] != ('_'+linux).encode()
+            or linux_trial[4:8] != b'BCAB'
+            or struct.unpack_from('<I',linux_trial,28)[0] != __import__('zlib').crc32(linux_trial[:28])):
+        raise ValueError('Installed Android/Linux boot roles conflict')
+    if android == 'b' and manifest.get('slot_roles_version',0) < 1:
+        raise ValueError('Package initramfs lacks dynamic-slot support')
+    return helper['bind_boot'](image, fallback, android)
+
+
+def read_control(client, path):
+    _, out, err = client.exec_command('cat '+path, timeout=15)
+    data = out.read(); error = err.read()
+    if out.channel.recv_exit_status() or len(data) != 32:
+        raise ValueError('Cannot read installed boot role: '+path+' '+error.decode('utf-8','replace'))
+    return data
 
 
 def image_capacity(client):
@@ -116,6 +139,10 @@ def main():
                 raise ValueError('New image exceeds the installed filesystem capacity; nothing staged')
             capacity_env = 'E5_IMAGE_FS_BYTES=' + str(capacity) + ' '
         boot = json.loads((files / 'boot.json').read_text())
+        helper = runpy.run_path(str(a.package/'scripts/installer/boot-slots.py'))
+        bound_boot = bind_update_boot((files/'boot.img').read_bytes(), boot,
+            read_control(client,'/run/e5linux/misc-bc-slot-a.bin'),
+            read_control(client,'/run/e5linux/misc-bc-slot-b-trial.bin'), helper)
         if layout in ('part', 'sd') and not boot.get('part_update'):
             raise RuntimeError('this package has no independent-partition update support; use a newer package')
         if layout == 'sd' and not boot.get('tf_update'):
@@ -134,7 +161,7 @@ def main():
         # Internal partition updates carry the selection in the boot header,
         # allowing encrypted Android userdata to stay completely unmounted.
         with __import__('tempfile').TemporaryDirectory() as temporary:
-            image = bytearray((files / 'boot.img').read_bytes())
+            image = bytearray(bound_boot)
             if layout == 'part':
                 image[44:1580] = b'e5.part_v=2 e5.root=part e5.part_update=1'.ljust(1536, b'\0')
             head = Path(temporary) / 'boot-head.img'

@@ -1,6 +1,6 @@
 #!/bin/sh
-# E5 first boot: bluetoothd's settings (/etc/bluetooth/main.conf, the
-# package's file): the adapter named E5, and always pairable -- a pairing is
+# First boot: bluetoothd's settings (/etc/bluetooth/main.conf, the
+# package's file): the board adapter name, and always pairable -- a pairing is
 # only kept (bonded) when the adapter is bondable; otherwise the kernel asks
 # the device for "No Bonding" and headphones have to be paired again at every
 # connection.
@@ -13,7 +13,11 @@ set_opt() {
 		sed -i "/^\\[General\\]/a $1 = $2" "$F"
 	fi
 }
-set_opt Name E5
+current=$(sed -n 's/^ *Name *= *//p' "$F" | head -n 1)
+case "$current" in ''|E5)
+	name=$(cat /etc/e5/device-hostname 2>/dev/null)
+	set_opt Name "${name:-E5}"
+;; esac
 set_opt AlwaysPairable true
 set_opt PairableTimeout 0
 exit 0

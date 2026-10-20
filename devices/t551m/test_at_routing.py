@@ -35,7 +35,7 @@ class Routing(unittest.TestCase):
                                        env=self.env, text=True).strip()
 
     def test_scoped_queries_and_controls_use_selected_owner(self):
-        for profile in ('t551m', 'e5', 'm8', 't512n'):
+        for profile in ('t551m', 'e5', 'm8', 't512n', 'yuanhang41s', 'k1'):
             self.profile.write_text(profile + '\n')
             for slot in (0, 1):
                 for suffix in ('+CFUN?', '+CFUN=4', '+CSCS?;+COPS?',
@@ -47,11 +47,13 @@ class Routing(unittest.TestCase):
             self.assertEqual(self.call(command), 'FAST:7:-t:5:' + command)
 
     def test_scoped_sms_keeps_mm_charset_storage_and_submit_owner(self):
-        for suffix in ('+CMGL=4', '+CMGR=1', '+CMGD=1', '+CMGS=12',
-                       '+CMGF=0', '+CPMS?', '+CSCS="UCS2"', '+CNMI?',
-                       '+CSCS?;+CMGR=1'):
-            self.assertEqual(self.call('AT+SPACTCARD=1;' + suffix), 'MM-REPLY\nOK')
-        self.assertEqual(self.call('AT+E5SMS=?'), 'MM-REPLY\nOK')
+        for profile in ('t551m', 'e5', 'm8', 't512n', 'yuanhang41s', 'k1'):
+            self.profile.write_text(profile + '\n')
+            for suffix in ('+CMGL=4', '+CMGR=1', '+CMGD=1', '+CMGS=12',
+                           '+CMGF=0', '+CPMS?', '+CSCS="UCS2"', '+CNMI?',
+                           '+CSCS?;+CMGR=1'):
+                self.assertEqual(self.call('AT+SPACTCARD=1;' + suffix), 'MM-REPLY\nOK')
+            self.assertEqual(self.call('AT+E5SMS=?'), 'MM-REPLY\nOK')
 
     def test_legacy_images_and_plain_commands_preserve_routing(self):
         self.assertEqual(self.call('AT+CESQ'), 'FAST:7:-t:5:AT+CESQ')

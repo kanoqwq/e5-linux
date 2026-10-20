@@ -84,6 +84,22 @@ with tempfile.TemporaryDirectory() as tmp:
             usb.queue_role('auto', '0'); token = usb.job_read()['token']
             assert usb.apply_role('device', '0', 'old-job')['superseded'] == 1
             assert usb.apply_role('auto', '0', token)['ok'] == 1
+            assert 'host-sink' not in usb.role_modes()
+            try: usb.queue_role('host-sink', '0')
+            except ValueError: pass
+            else: raise AssertionError('External host exposed without kernel capability')
+            capability = policy.with_name('usb_host_sink_supported')
+            capability.write_text('1\n')
+            assert 'host-sink' in usb.state()['role_supported']
+            try: usb.queue_role('host-sink', '1')
+            except ValueError: pass
+            else: raise AssertionError('Experimental external host persisted at boot')
+            usb.queue_role('host-sink', '0'); token = usb.job_read()['token']
+            assert usb.apply_role('host-sink', '0', token)['ok'] == 1
+            assert settings['role_auto'] == '0' and usb.state()['role'] == 'device'
+            usb.queue_role('host-sink', '0'); token = usb.job_read()['token']
+            capability.unlink()
+            assert usb.apply_role('host-sink', '0', token)['ok'] == 0
             usb.queue_role('device', '0'); token = usb.job_read()['token']
             policy.unlink()
             assert usb.apply_role('device', '0', token)['ok'] == 0

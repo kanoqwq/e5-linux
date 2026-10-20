@@ -1,0 +1,40 @@
+{
+  "format": 1,
+  "base": "{workspace}/base/e5",
+  "defaults": "{repo}/work/e5-port/clean-openwrt-base.tar",
+  "busybox": "{repo}/work/t551m/busybox",
+  "block_apk": "{repo}/out/openwrt/block-mount-guarded.apk",
+  "wifi_apks": "{repo}/work/wifi-sae",
+  "profiles": {
+    "e5": {
+      "kernel": "{workspace}/kernels/e5",
+      "stock_boot": "{repo}/work/e5-port/boot-before.img",
+      "misc_head": "{repo}/work/e5-port/misc-head.bin"
+    },
+    "t551m": {
+      "kernel": "{workspace}/kernels/t551m",
+      "stock_boot": "{repo}/dumps/t551m-original/boot_b.img",
+      "misc_head": "{repo}/dumps/t551m-original/misc-head.bin"
+    },
+    "m8": {
+      "kernel": "{workspace}/kernels/m8",
+      "stock_boot": "{repo}/dumps/m8-stock/boot_b.img",
+      "misc_head": "{repo}/dumps/m8-stock/misc-head.bin"
+    },
+    "t512n": {
+      "kernel": "{workspace}/kernels/t512n",
+      "stock_boot": "{repo}/dumps/t512n-stock-20261018/boot_b.img",
+      "misc_head": "{repo}/dumps/t512n-stock-20261018/misc-head.bin"
+    },
+    "yuanhang41s": {
+      "kernel": "{repo}/out/yuanhang41s/kernel",
+      "stock_boot": "{repo}/dumps/yuanhang41s-stock-20261020/boot_b.img",
+      "misc_head": "{repo}/dumps/yuanhang41s-stock-20261020/misc-head.bin"
+    },
+    "k1": {
+      "kernel": "{workspace}/k1/kernel",
+      "stock_boot": "{repo}/dumps/k1-stock-20261020/boot_b.img",
+      "misc_head": "{repo}/dumps/k1-stock-20261020/misc-head.bin"
+    }
+  }
+}

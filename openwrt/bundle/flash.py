@@ -28,8 +28,10 @@ import argparse
 import gzip
 import hashlib
 import http.server
+import io
 import json
 import os
+from pathlib import Path
 import random
 import re
 import runpy
@@ -55,6 +57,8 @@ D = '/data/e5linux'
 TMP = '/data/local/tmp'
 GUI = None  # Structured observer; CLI remains independent.
 SERIAL = None
+ANDROID_SLOT = None
+LINUX_SLOT = None
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -161,20 +165,57 @@ def boot_json():
         return json.load(f)
 
 
+def slot_api():
+    helper = os.path.join(SCRIPTS, 'installer', 'boot-slots.py')
+    if not os.path.isfile(helper):
+        helper = os.path.join(os.path.dirname(__file__), 'boot-slots.py')
+    return runpy.run_path(helper)
+
+
+def current_slots():
+    if ANDROID_SLOT not in ('a', 'b') or LINUX_SLOT not in ('a', 'b') or ANDROID_SLOT == LINUX_SLOT:
+        raise ValueError('Android/Linux slots have not been identified')
+    return ANDROID_SLOT, LINUX_SLOT
+
+
+def bind_boot_image(image):
+    android, linux = current_slots()
+    if android == 'b' and boot_json().get('slot_roles_version', 0) < 1:
+        raise ValueError('This package lacks dynamic-slot initramfs support; rebuild the package before installing from Android B')
+    return slot_api()['bind_boot'](image, read_boot_control(), android)
+
+
+def push_boot(work, remote):
+    image = os.path.join(F, 'boot.img')
+    original = boot_json()
+    if sha256(image) != original['sha256']:
+        raise ValueError('boot image does not match boot.json')
+    with open(image, 'rb') as stream:
+        payload = bind_boot_image(stream.read())
+    local = os.path.join(work, 'boot-device.img')
+    with open(local, 'wb') as stream:
+        stream.write(payload)
+    push(local, remote, 'boot.img')
+    return dict(original, sha256=hashlib.sha256(payload).hexdigest(),
+                android_slot=ANDROID_SLOT, linux_slot=LINUX_SLOT)
+
+
 def package_profile():
     path = os.path.join(F, 'device-profile.json')
     if not os.path.isfile(path):
         return None  # Legacy E5 packages did not carry a profile manifest.
     with open(path, encoding='utf-8') as stream:
         value = json.load(stream)
-    if value.get('profile') not in ('e5', 't551m', 'm8', 't512n') or not value.get('android_models'):
+    if value.get('profile') not in ('e5', 't551m', 'm8', 't512n', 'yuanhang41s', 'k1') or not value.get('android_models'):
         die('invalid package device profile')
+    if value['profile'] == 'k1' and value['android_models'] != ['angelcare K1']:
+        die('K1 package model identity differs')
     return value
 
 
 def default_hotspot_name():
     profile = package_profile()
-    model = {'e5': 'E5', 't551m': 'T551M', 'm8': 'M8', 't512n': 'T512N'}[
+    model = {'e5': 'E5', 't551m': 'T551M', 'm8': 'M8', 't512n': 'T512N', 'yuanhang41s': 'Yuanhang41S', 'k1': 'K1'}[
         profile['profile'] if profile else 'e5']
     return model + '-OpenWrt'
 
@@ -388,10 +429,13 @@ def arm_slot_b():
 def _arm_slot_b():
     # Derive metadata from this device, not the package author's misc snapshot.
     before = read_boot_control()
+    android = ANDROID_SLOT or slot_api()['validate_control'](before)
+    linux = 'b' if android == 'a' else 'a'
+    current, target = (12, 14) if android == 'a' else (14, 12)
     trial = bytearray(before)
-    trial[:4] = b'_b\0\0'
-    trial[12] = (before[12] & 0xf0) | 14
-    trial[14] = 0x2f
+    trial[:4] = ('_' + linux).encode() + b'\0\0'
+    trial[current] = (before[current] & 0xf0) | 14
+    trial[target] = 0x2f
     trial[28:] = struct.pack('<I', zlib.crc32(trial[:28]))
     with tempfile.TemporaryDirectory() as work:
         local = os.path.join(work, 'trial.bin')
@@ -413,17 +457,11 @@ def _arm_slot_b():
         f'[ "$(dd if=/dev/block/by-name/misc bs=1 skip=2048 count=32 2>/dev/null | sha256sum | cut -d " " -f1)" = {expected} ] || '
         'echo "RESTORE FAILED: do not reboot; inspect misc and $backup"; exit 1; fi; '
         f'rm -f {TMP}/e5-bc-b.bin')
-    print(su_checked('设置 B 槽试启动 / arming slot B', command))
+    print(su_checked(f'设置 {linux.upper()} 槽试启动 / arming slot {linux.upper()}', command))
 
 
 def validate_boot_control(data):
-    if (len(data) != 32 or data[4:8] != b'BCAB' or data[8] != 1 or data[9] & 7 != 2
-            or struct.unpack('<I', data[28:])[0] != zlib.crc32(data[:28])):
-        raise ValueError('invalid BCAB format/version/CRC')
-    if not data[12] & 0x80 or not data[12] & 15 or data[13] & 1 or data[15] & 1:
-        raise ValueError('Android A is not successful or a slot has a verity error')
-    if (data[14] & 15) > (data[12] & 15):
-        raise ValueError('B has higher priority: finish or cancel the pending Android OTA first')
+    slot_api()['validate_control'](data, ANDROID_SLOT)
     return data
 
 
@@ -453,17 +491,21 @@ def _bootchain(mode):
 
 def install_preflight():
     read_boot_control()
+    android, linux = current_slots()
     image = os.path.join(F, 'boot.img')
-    if os.path.getsize(image) != device_size('/dev/block/by-name/boot_b'):
-        die('boot image/boot_b partition size mismatch; nothing formatted')
+    if os.path.getsize(image) != device_size('/dev/block/by-name/boot_' + linux):
+        die('boot image/target boot partition size mismatch; nothing formatted')
     if sha256(image) != boot_json()['sha256']:
         die('boot image does not match boot.json')
+    if android == 'b' and boot_json().get('slot_roles_version', 0) < 1:
+        die('package initramfs does not support dynamic slots; rebuild before installing from Android B')
     bootchain('check')
 
 
 def android_checks():
-    global SU, SERIAL, ANDROID_BUSYBOX
+    global SU, SERIAL, ANDROID_BUSYBOX, ANDROID_SLOT, LINUX_SLOT
     SU = ANDROID_BUSYBOX = None
+    ANDROID_SLOT = LINUX_SLOT = None
     say('连接设备 / looking for Android (USB debugging on)')
     devs = [l for l in adb('devices').splitlines()[1:] if l.strip().endswith('\tdevice')]
     if not SERIAL and len(devs) > 1 and sys.stdin.isatty() and not GUI:
@@ -492,14 +534,21 @@ def android_checks():
         model = sh('getprop ro.product.model').strip()
         if model not in profile['android_models']:
             die(f"Wrong device: package is for {profile['profile']}, Android reports {model!r}. Nothing was written.")
-    if sh('getprop ro.boot.slot_suffix').strip() != '_a':
-        die('Android is not running from slot a')
+        if profile['profile'] == 'k1' and sh('getprop ro.product.device').strip() != 'ums9157_2h10':
+            die('Wrong K1 board; expected ums9157_2h10. Nothing was written.')
+        if profile['profile'] == 'yuanhang41s' and sh('getprop ro.product.device').strip() != 'P720S11':
+            die('Wrong 41S board; expected P720S11. Nothing was written.')
+    suffix = sh('getprop ro.boot.slot_suffix').strip()
+    if suffix not in ('_a', '_b'):
+        die('Android slot is unavailable; nothing written')
+    ANDROID_SLOT = suffix[1:]
+    LINUX_SLOT = 'b' if ANDROID_SLOT == 'a' else 'a'
     # T512N engineering firmware reports green/locked but the owner confirmed
     # it accepts the replacement boot payload without an unlock/reset.
-    if (not profile or profile['profile'] != 't512n') and sh('getprop ro.boot.verifiedbootstate').strip() != 'orange':
+    if (not profile or profile['profile'] not in ('t512n','yuanhang41s')) and sh('getprop ro.boot.verifiedbootstate').strip() != 'orange':
         die('the bootloader is locked (verifiedbootstate is not orange)')
-    if 'ok' not in su('[ -e /dev/block/by-name/boot_b ] && [ -e /dev/block/by-name/l_agdsp_a ] && echo ok'):
-        die('no boot_b or l_agdsp_a partition: not an E5?')
+    if 'ok' not in su(f'[ -e /dev/block/by-name/boot_{LINUX_SLOT} ] && [ -e /dev/block/by-name/l_agdsp_{ANDROID_SLOT} ] && echo ok'):
+        die('target boot or Android audio firmware partition missing')
     android_tools()
     print(f'   ok ({sh("getprop ro.product.model").strip()}, root via {SU or "adbd"})')
 
@@ -515,19 +564,27 @@ def pull_device_files(work, out=None):
     say('从这台设备提取固件和基带文件 / the firmware and baseband files of this device')
     st = f'{TMP}/e5pull'
     su(f'rm -rf {st}; mkdir -p {st}')
+    board = (package_profile() or {}).get('profile') == 'yuanhang41s'
+    pskey = 'bt_configure_pskey.ini' if board else 'bt_configure_pskey.xpe.ini'
+    rf = 'bt_configure_rf.ini' if board else 'bt_configure_rf.xpe.ini'
+    amplifier = 'aw883xx_acf.bin' if board else 'aw87xxx_acf.bin'
     wanted = ['/odm/firmware/wcnmodem.bin', '/odm/firmware/gnssmodem.bin',
-              '/odm/firmware/bt_configure_pskey.xpe.ini', '/odm/firmware/bt_configure_rf.xpe.ini',
-              '/mnt/vendor/btmac.txt', '/vendor/firmware/aw87xxx_acf.bin',
+              '/odm/firmware/'+pskey, '/odm/firmware/'+rf,
+              '/mnt/vendor/btmac.txt', '/vendor/firmware/'+amplifier,
               '/odm/etc/audio_params/sprd/audio_structure.xml',
               '/odm/etc/audio_params/sprd/codec.xml',
               '/odm/etc/audio_params/sprd/dsp_vbc.xml', '/odm/etc/audio_params/sprd/cvs.xml']
+    if board:
+        wanted += ['/vendor/firmware/sitronix_firmware_huaying.dump',
+                   '/vendor/firmware/awinic_params.bin', '/odm/etc/audio_route.xml',
+                   '/odm/etc/audio_params/sprd/audio_pga.xml']
     wanted += ['/odm/firmware/' + n for n in su('ls /odm/firmware/').split()
                if n.startswith('wifi_board_config') and n.endswith('.ini')]
     for p in wanted:
         su(f'cp -f {p} {st}/ 2>/dev/null')
     # optional on some units (a dangling link on this one)
     su(f'cp -f /vendor/firmware/tsx_data {st}/ 2>/dev/null')
-    su(f'dd if=/dev/block/by-name/l_agdsp_a of={st}/l_agdsp_a.img bs=1M count=6 2>/dev/null; chmod -R a+r {st}')
+    su(f'dd if=/dev/block/by-name/l_agdsp_{ANDROID_SLOT} of={st}/l_agdsp_a.img bs=1M count=6 2>/dev/null; chmod -R a+r {st}')
     raw = os.path.join(work, 'raw')
     os.makedirs(raw)
     names = su(f'ls {st}').split()
@@ -535,8 +592,10 @@ def pull_device_files(work, out=None):
         adb('pull', f'{st}/{n}', os.path.join(raw, n), check=True)
         bar((i + 1) / len(names), '固件 / firmware', n)
     su(f'rm -rf {st}')
-    need = ['wcnmodem.bin', 'bt_configure_pskey.xpe.ini', 'bt_configure_rf.xpe.ini', 'btmac.txt',
+    need = ['wcnmodem.bin', pskey, rf, 'btmac.txt',
             'l_agdsp_a.img', 'audio_structure.xml', 'dsp_vbc.xml', 'cvs.xml']
+    if board:
+        need += [amplifier,'sitronix_firmware_huaying.dump','audio_route.xml','audio_pga.xml']
     for n in need:
         if not os.path.isfile(os.path.join(raw, n)):
             die(f'this device has no {n}: not an E5, or a different firmware')
@@ -549,12 +608,13 @@ def pull_device_files(work, out=None):
     fw = os.path.join(work, 'lib', 'firmware')
     os.makedirs(os.path.join(fw, 'sprd'))
     for n in os.listdir(raw):
-        if n in ('wcnmodem.bin', 'gnssmodem.bin', 'aw87xxx_acf.bin', 'tsx_data', 'l_agdsp_a.img', 'codec.xml') or \
+        if n in ('wcnmodem.bin', 'gnssmodem.bin', amplifier, 'tsx_data', 'l_agdsp_a.img', 'codec.xml') or \
+                (board and n in ('sitronix_firmware_huaying.dump','awinic_params.bin','audio_route.xml','audio_pga.xml')) or \
                 (n.startswith('wifi_board_config') and n.endswith('.ini')):
             shutil.copy(os.path.join(raw, n), fw)
     tools = os.path.join(SCRIPTS, 'tools')
-    bt = (os.path.join(tools, 'sprd-bt-config.py'), os.path.join(raw, 'bt_configure_pskey.xpe.ini'),
-          os.path.join(raw, 'bt_configure_rf.xpe.ini'), os.path.join(raw, 'btmac.txt'), os.path.join(fw, 'sprd'))
+    bt = (os.path.join(tools, 'sprd-bt-config.py'), os.path.join(raw, pskey),
+          os.path.join(raw, rf), os.path.join(raw, 'btmac.txt'), os.path.join(fw, 'sprd'))
     vbc = (os.path.join(tools, 'vbc-profile', 'vbc-profile.py'), os.path.join(raw, 'dsp_vbc.xml'),
            os.path.join(raw, 'audio_structure.xml'), os.path.join(raw, 'cvs.xml'), '-o', fw)
     if GUI:
@@ -566,6 +626,12 @@ def pull_device_files(work, out=None):
     for n in ('sprd/marlin3lite_pskey.bin', 'sprd/marlin3lite_rf.bin', 'audio_structure', 'dsp_vbc', 'cvs'):
         if not os.path.isfile(os.path.join(fw, *n.split('/'))):
             die(f'converting the firmware made no {n}')
+    if board:
+        generator = os.path.join(tools,'yuanhang41s-audio-routes.py')
+        ucm, gain = runpy.run_path(generator)['generate'](
+            Path(raw)/'audio_route.xml', Path(raw)/'audio_pga.xml', Path(tools)/'yuanhang41s-HiFi.base.conf')
+        Path(fw,'yuanhang41s-HiFi.conf').write_text(ucm,encoding='utf-8',newline='\n')
+        Path(fw,'yuanhang41s-media-max').write_text(str(gain)+'\n',encoding='utf-8',newline='\n')
 
     def root(t):
         t.uid = t.gid = 0
@@ -575,6 +641,14 @@ def pull_device_files(work, out=None):
     fwtar = os.path.join(work, 'firmware.tar')
     with tarfile.open(fwtar, 'w', format=tarfile.GNU_FORMAT) as t:
         t.add(os.path.join(work, 'lib'), 'lib', filter=root)
+        if board:
+            item = tarfile.TarInfo('lib/firmware/sitronix/st7123.bin')
+            item.type = tarfile.SYMTYPE; item.linkname = '../sitronix_firmware_huaying.dump'; item.mode = 0o777
+            t.addfile(item)
+        android, _ = current_slots()
+        for name, data in slot_api()['role_files'](read_boot_control(), android).items():
+            item = tarfile.TarInfo(name); item.uid = item.gid = 0; item.mode = 0o644; item.size = len(data)
+            t.addfile(item, io.BytesIO(data))
     adb('push', fwtar, f'{TMP}/e5-firmware.tar', check=True)
     adb('push', os.path.join(F, 'collect-device-files.sh'), f'{TMP}/e5-collect.sh', check=True)
     with busy('在手机上打包 vendor 文件 / packing the vendor files on the phone'):
@@ -773,7 +847,7 @@ def install_sd(a):
         # the card. A missing vendor file must not destroy a working SD install.
         size = pull_device_files(work, f'{TMP}/e5-device-files.tar')
         push(img, f'{TMP}/openwrt.ext4.gz', 'openwrt.ext4.gz')
-        push(os.path.join(F, 'boot.img'), f'{TMP}/e5-boot.img', 'boot.img')
+        bj = push_boot(work, f'{TMP}/e5-boot.img')
         push(os.path.join(F, 'ext4-tools.tar'), f'{TMP}/e5-tf-ext4-tools.tar', 'ext4 tools')
         su_checked('检查 TF 工具 / checking TF tools', 'command -v blockdev >/dev/null')
         unmount_android_sd(sd)
@@ -854,13 +928,13 @@ def install_sd(a):
         print(f'   OpenWrt and {size} bytes of device files are on the card')
         print(f'   TF filesystem uses {capacity / (1 << 30):.2f} GiB; updates use the PC installer')
 
-        say('写入启动镜像 / boot image -> boot_b')
-        with busy('写入并校验 boot_b / writing and verifying boot_b'):
-            su_checked('写入 boot_b / writing boot_b',
-                       f'dd if={TMP}/e5-boot.img of=/dev/block/by-name/boot_b bs=4M; sync', **({'effect': 'boot-image'} if GUI else {}))
-            ok = su('sha256sum /dev/block/by-name/boot_b').split()[0:1] == [bj['sha256']]
+        say(f'写入启动镜像 / boot image -> boot_{LINUX_SLOT}')
+        with busy(f'写入并校验 boot_{LINUX_SLOT} / writing and verifying boot_{LINUX_SLOT}'):
+            su_checked(f'写入 boot_{LINUX_SLOT} / writing boot_{LINUX_SLOT}',
+                       f'dd if={TMP}/e5-boot.img of=/dev/block/by-name/boot_{LINUX_SLOT} bs=4M; sync', **({'effect': 'boot-image'} if GUI else {}))
+            ok = su(f'sha256sum /dev/block/by-name/boot_{LINUX_SLOT}').split()[0:1] == [bj['sha256']]
         if not ok:
-            die('boot_b did not verify; Android stays as it is')
+            die('target Linux boot did not verify; Android stays as it is')
         su(f'rm -f {TMP}/e5-boot.img')
 
     # The boot target, explicit: e5linux/boot-os on userdata is a few bytes, and
@@ -987,7 +1061,7 @@ def install(a):
         size = pull_device_files(work, firmware)
         print(f'   device-files.tar: {size} bytes')
         push(img, f'{TMP}/openwrt.ext4.gz', 'openwrt.ext4.gz')
-        push(os.path.join(F, 'boot.img'), f'{TMP}/e5-boot.img', 'boot.img')
+        bj = push_boot(work, f'{TMP}/e5-boot.img')
         push(tools, f'{TMP}/e5-ext4-tools.tar', 'ext4-tools.tar')
         # Recheck after uploads/firmware collection, so Android concurrent writes
         # cannot turn the initial capacity estimate into a partial installation.
@@ -1018,14 +1092,14 @@ def install(a):
                    f'mv {TMP}/e5-install.conf {D}/openwrt-install.conf; '
                    f'chmod 600 {D}/openwrt.ext4 {D}/device-files.tar {D}/openwrt-install.conf; sync')
 
-    say('写入启动镜像 / boot image -> boot_b')
-    with busy('写入并校验 boot_b / writing and verifying boot_b'):
-        su_checked('写入 boot_b / writing boot_b',
-                   f'dd if={TMP}/e5-boot.img of=/dev/block/by-name/boot_b bs=4M conv=fsync; sync',
+    say(f'写入启动镜像 / boot image -> boot_{LINUX_SLOT}')
+    with busy(f'写入并校验 boot_{LINUX_SLOT} / writing and verifying boot_{LINUX_SLOT}'):
+        su_checked(f'写入 boot_{LINUX_SLOT} / writing boot_{LINUX_SLOT}',
+                   f'dd if={TMP}/e5-boot.img of=/dev/block/by-name/boot_{LINUX_SLOT} bs=4M conv=fsync; sync',
                    **({'effect':'boot-image'} if GUI else {}))
-        ok = su('sha256sum /dev/block/by-name/boot_b').split()[0:1] == [bj['sha256']]
+        ok = su(f'sha256sum /dev/block/by-name/boot_{LINUX_SLOT}').split()[0:1] == [bj['sha256']]
     if not ok:
-        die('boot_b did not verify; Android stays as it is')
+        die('target Linux boot did not verify; Android stays as it is')
     su(f'rm -f {TMP}/e5-boot.img')
     su_checked('记录 userdata 启动目标 / saving userdata boot target',
                f'rm -f {D}/boot-os-next; echo openwrt > {D}/boot-os; sync')
@@ -1190,7 +1264,7 @@ def install_part(a):
         size = pull_device_files(work, firmware)
         print(f'   device-files.tar: {size} bytes')
         push(img, f'{TMP}/e5-part-install.img.gz', 'openwrt.ext4.gz')
-        push(os.path.join(F, 'boot.img'), f'{TMP}/e5-boot.img', 'boot.img')
+        bj = push_boot(work, f'{TMP}/e5-boot.img')
         conf = os.path.join(work, 'part-install.settings')
         with open(conf, 'w', encoding='utf-8', newline='\n') as f:
             f.write("E5_APN='%s'\nE5_WIFI_SSID='%s'\nE5_WIFI_KEY='%s'\n"
@@ -1207,14 +1281,14 @@ def install_part(a):
                    f'chmod 600 {D}/part-install.conf {D}/part-install.settings {D}/device-files.tar; sync')
 
     bootchain('sync')
-    say('写入启动镜像 / boot image -> boot_b')
-    with busy('写入并校验 boot_b / writing and verifying boot_b'):
-        su_checked('写入 boot_b / writing boot_b',
-                   f'dd if={TMP}/e5-boot.img of=/dev/block/by-name/boot_b bs=4M conv=fsync; sync',
+    say(f'写入启动镜像 / boot image -> boot_{LINUX_SLOT}')
+    with busy(f'写入并校验 boot_{LINUX_SLOT} / writing and verifying boot_{LINUX_SLOT}'):
+        su_checked(f'写入 boot_{LINUX_SLOT} / writing boot_{LINUX_SLOT}',
+                   f'dd if={TMP}/e5-boot.img of=/dev/block/by-name/boot_{LINUX_SLOT} bs=4M conv=fsync; sync',
                    **({'effect':'boot-image'} if GUI else {}))
-        ok = su('sha256sum /dev/block/by-name/boot_b').split()[0:1] == [bj['sha256']]
+        ok = su(f'sha256sum /dev/block/by-name/boot_{LINUX_SLOT}').split()[0:1] == [bj['sha256']]
     if not ok:
-        die('boot_b did not verify; Android stays as it is')
+        die('target Linux boot did not verify; Android stays as it is')
     su(f'rm -f {TMP}/e5-boot.img')
     su_checked('记录分区启动目标 / recording the partition boot target',
                f'rm -f {D}/boot-os-next; echo part > {D}/boot-os; sync')
@@ -1337,7 +1411,7 @@ def main():
                    help='continue the encrypted-data installation after Android setup/root authorization')
     g.add_argument('--reinstall-part', action='store_true',
                    help='rewrite an existing internal partition system: userdata, its filesystem and '
-                        'the partition table stay, e5root and boot_b are replaced (no wipe, no stage one)')
+                        'the partition table stay, e5root and the Linux boot slot are replaced (no wipe, no stage one)')
     ap.add_argument('--apn')
     ap.add_argument('--serial', help='bind all ADB operations to this device')
     ap.add_argument('--ssid', help='hotspot name; defaults to the package device model plus -OpenWrt')

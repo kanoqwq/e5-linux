@@ -227,6 +227,7 @@ class Adapter:
             self.legacy.SERIAL = serial
             self.legacy.SU = None
             self.legacy.ANDROID_BUSYBOX = None
+            self.legacy.ANDROID_SLOT = self.legacy.LINUX_SLOT = None
             self.legacy.find_adb = lambda: None
 
     def probe(self, serial, method='part'):
@@ -259,10 +260,16 @@ class Adapter:
             if device['model'] not in profile['android_models']:
                 raise ValueError('Package model differs / 安装包机型不匹配: ' + device['model'])
             device['profile'] = profile['profile']
-            if device['slot'] != '_a':
-                raise ValueError('Start from Android slot A / 请从 Android A 槽安装')
-            if profile['profile'] != 't512n' and properties['ro.boot.verifiedbootstate'] != 'orange':
-                raise ValueError('E5 requires unlocked Android slot A / E5 要求已解锁且当前 Android 在 A 槽')
+            if profile['profile']=='k1' and properties['ro.product.device']!='ums9157_2h10':
+                raise ValueError('Wrong K1 board / K1 硬件标识不匹配')
+            if profile['profile']=='yuanhang41s' and properties['ro.product.device']!='P720S11':
+                raise ValueError('Wrong 41S board / 远航 41S 硬件标识不匹配')
+            if device['slot'] not in ('_a', '_b'):
+                raise ValueError('Android slot unavailable / 无法识别 Android 槽位')
+            self.legacy.ANDROID_SLOT = device['slot'][1:]
+            self.legacy.LINUX_SLOT = 'b' if device['slot'] == '_a' else 'a'
+            if profile['profile'] not in ('t512n','yuanhang41s') and properties['ro.boot.verifiedbootstate'] != 'orange':
+                raise ValueError('E5 requires unlocked Android / E5 要求已解锁 Android')
         else:
             device['profile'] = self.legacy.android_profile(device['model'] + '\n' + properties['ro.product.device'], properties['ro.board.platform'])
         # Trial boot uses only the boot signature, boot-chain check and misc.

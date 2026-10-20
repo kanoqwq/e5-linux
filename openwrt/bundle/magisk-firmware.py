@@ -29,13 +29,15 @@ def settings(raw, default_ssid):
         ('E5_WIFI_CHANNEL', '149'), ('E5_DEFAULT_BOOT', 'linux')))
 
 
-def convert(raw, out, tools, default_ssid):
+def convert(raw, out, tools, default_ssid, profile=''):
     raw, out, tools = Path(raw), Path(out), Path(tools)
     fw = out / 'lib/firmware'
     (fw / 'sprd').mkdir(parents=True)
     import shutil
+    board=profile=='yuanhang41s'
     for p in raw.iterdir():
-        if p.name in ('wcnmodem.bin', 'gnssmodem.bin', 'l_agdsp_a.img', 'aw87xxx_acf.bin', 'tsx_data', 'codec.xml') or (
+        if p.name in ('wcnmodem.bin', 'gnssmodem.bin', 'l_agdsp_a.img', 'aw87xxx_acf.bin', 'tsx_data', 'codec.xml') or (board and p.name in (
+                'aw883xx_acf.bin','awinic_params.bin','sitronix_firmware_huaying.dump','audio_route.xml','audio_pga.xml')) or (
                 p.name.startswith('wifi_board_config') and p.suffix == '.ini'):
             shutil.copyfile(p, fw / p.name)
     if not list(fw.glob('wifi_board_config*.ini')):
@@ -48,8 +50,8 @@ def convert(raw, out, tools, default_ssid):
     if len(octets) != 6:
         raise ValueError('invalid Bluetooth address')
     for source, target, length, address in (
-            ('bt_configure_pskey.xpe.ini', 'marlin3lite_pskey.bin', bt['PSKEY_LEN'], octets[::-1]),
-            ('bt_configure_rf.xpe.ini', 'marlin3lite_rf.bin', bt['RF_LEN'], None)):
+            ('bt_configure_pskey.ini' if board else 'bt_configure_pskey.xpe.ini', 'marlin3lite_pskey.bin', bt['PSKEY_LEN'], octets[::-1]),
+            ('bt_configure_rf.ini' if board else 'bt_configure_rf.xpe.ini', 'marlin3lite_rf.bin', bt['RF_LEN'], None)):
         (fw / 'sprd' / target).write_bytes(bt['pack'](bt['parse'](raw / source), length, address))
     audio = runpy.run_path(str(tools / 'vbc-profile/vbc-profile.py'))
     for name in ('dsp_vbc', 'audio_structure', 'cvs'):
@@ -57,6 +59,15 @@ def convert(raw, out, tools, default_ssid):
         if tag != name:
             raise ValueError('unexpected audio profile tag: ' + tag)
         (fw / name).write_bytes(blob)
+    if board:
+        for name in ('aw883xx_acf.bin','sitronix_firmware_huaying.dump'):
+            if not (fw/name).stat().st_size:raise ValueError('missing 41S firmware: '+name)
+        ucm,gain=runpy.run_path(str(tools/'yuanhang41s-audio-routes.py'))['generate'](
+            raw/'audio_route.xml',raw/'audio_pga.xml',tools/'yuanhang41s-HiFi.base.conf')
+        (fw/'yuanhang41s-HiFi.conf').write_text(ucm,encoding='utf-8',newline='\n')
+        (fw/'yuanhang41s-media-max').write_text(str(gain)+'\n',encoding='utf-8',newline='\n')
+        (fw/'sitronix').mkdir()
+        (fw/'sitronix/st7123.bin').symlink_to('../sitronix_firmware_huaying.dump')
     for name in ('wcnmodem.bin', 'l_agdsp_a.img', 'audio_structure', 'dsp_vbc', 'cvs',
                  'sprd/marlin3lite_pskey.bin', 'sprd/marlin3lite_rf.bin'):
         if not (fw / name).stat().st_size:
@@ -65,4 +76,4 @@ def convert(raw, out, tools, default_ssid):
 
 
 if __name__ == '__main__':
-    convert(*sys.argv[1:5])
+    convert(*sys.argv[1:6])

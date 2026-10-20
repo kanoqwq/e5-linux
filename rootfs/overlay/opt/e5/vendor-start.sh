@@ -28,19 +28,20 @@ for u in /sys/class/block/mmcblk0p*/uevent; do
   ln -sfn "/dev/$d" "/dev/block/$d"
   [ -n "$n" ] && ln -sfn "/dev/$d" "/dev/block/by-name/$n"
 done
-# modem_control takes the slot from the *current* boot slot, so a slot-b trial loads
-# slot b's modem firmware and NV (nr_phy_b, nr_fixnv1_b, nr_deltanv_b).  Android runs
-# from slot a, and slot a is where its RIL configured the modem -- including whatever
-# NR/5G settings exist.  Point the _b names at the _a devices unless
-# /etc/e5/modem-slot says "current".
+# Select the Android firmware slot independently of the OpenWrt boot slot.
+# Existing installations default to A; a device collected from Android B must
+# explicitly select B. "current" preserves the actual bootloader slot.
 modem_slot=$(cat /etc/e5/modem-slot 2>/dev/null || echo a)
-if [ "$modem_slot" = "a" ]; then
+case "$modem_slot" in a|b|current) ;; *) echo "invalid modem-slot" >&2; exit 4 ;; esac
+if [ "$modem_slot" != "current" ]; then
+  other_slot=b
+  [ "$modem_slot" != "b" ] || other_slot=a
   for p in nr_modem nr_phy nr_deltanv nr_fixnv1 nr_fixnv2; do
     if [ -e "/dev/block/by-name/${p}_a" ] && [ -e "/dev/block/by-name/${p}_b" ]; then
-      ln -sfn "/dev/block/by-name/${p}_a" "/dev/block/by-name/${p}_b"
+      ln -sfn "/dev/block/by-name/${p}_${modem_slot}" "/dev/block/by-name/${p}_${other_slot}"
     fi
   done
-  echo "stage=modem-slot a (Android's own images; _b names remapped)"
+  echo "stage=modem-slot $modem_slot (Android's own images; _$other_slot names remapped)"
 fi
 /opt/e5/node-perms.sh 2>/dev/null || true
 chmod 0666 /sys/power/wake_lock /sys/power/wake_unlock 2>/dev/null || true
@@ -79,16 +80,21 @@ echo "stage=cmdline"
 # LK's bootargs carry the slot as Unisoc spells it -- sprdboot.slot_suffix=_b -- and
 # this is also what modem_control reads: with _b it loads the *other* slot's modem
 # images and NV (nr_phy_b, nr_fixnv1_b, nr_deltanv_b) instead of the ones Android
-# itself runs.  Rewrite both spellings, and add them if the source has neither.
+# itself runs. Supply both spellings: some recipient loaders only parse the
+# Unisoc name, and some read a bounded prefix of the command line.
 src=/proc/cmdline
 grep -qE '(android|sprd)boot\.slot_suffix' /proc/cmdline ||
     [ ! -r /proc/device-tree/chosen/bootargs ] || src=/proc/device-tree/chosen/bootargs
-tr -d '\000' < "$src" |
-    sed -e 's/sprdboot\.slot_suffix=_b/sprdboot.slot_suffix=_a/' \
-        -e 's/androidboot\.slot_suffix=_b/androidboot.slot_suffix=_a/' \
-    > /run/e5-cmdline.android
-grep -qE '(android|sprd)boot\.slot_suffix' /run/e5-cmdline.android ||
-    printf ' androidboot.slot_suffix=_a sprdboot.slot_suffix=_a\n' >> /run/e5-cmdline.android
+tr -d '\000' < "$src" > /run/e5-cmdline.android
+if [ "$modem_slot" != "current" ]; then
+    sed -e 's/sprdboot\.slot_suffix=_[ab]//g' \
+        -e 's/androidboot\.slot_suffix=_[ab]//g' \
+        /run/e5-cmdline.android > /run/e5-cmdline.without-slot
+    { printf 'androidboot.slot_suffix=_%s sprdboot.slot_suffix=_%s ' \
+        "$modem_slot" "$modem_slot"; cat /run/e5-cmdline.without-slot; } \
+        > /run/e5-cmdline.android
+    rm -f /run/e5-cmdline.without-slot
+fi
 chmod 0666 /sys/devices/platform/soc/*/*sipa-dele*/sipa_dele_reset 2>/dev/null || true
 mountpoint -q "$A/proc/cmdline" || mount --bind /run/e5-cmdline.android "$A/proc/cmdline"
 

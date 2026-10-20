@@ -14,6 +14,7 @@ Recovery = scope['Recovery']
 GLOBALS = Recovery.evaluate.__globals__
 MODEM = {'dbus-path': '/modem/0',
          'generic': {'device': 'unisoc-sipc', 'plugin': 'unisoc', 'state': 'registered',
+                     'sim': '/sim/0',
                      'primary-sim-slot': '1', 'access-technologies': ['lte']},
          '3gpp': {'registration-state': 'home', 'packet-service-state': 'attached',
                   'operator-code': '46001'}}
@@ -119,6 +120,41 @@ class Tests(unittest.TestCase):
         self.modem['generic']['state'] = 'registered'
         self.recovery.evaluate()
         self.assertEqual(len(self.resumes()), 1)
+
+    def test_late_modem_recovers_boot_no_device_before_registration(self):
+        self.wan['errors'] = [{'code': 'NO_DEVICE'}]
+        self.modem['generic']['state'] = 'enabled'
+        self.modem['3gpp'].update({'registration-state': 'idle',
+                                  'packet-service-state': 'detached'})
+        self.modem['generic']['access-technologies'] = []
+        for _ in range(10):
+            self.recovery.evaluate()
+        self.assertEqual(len(self.resumes()), 1)
+
+    def test_no_device_preserves_sim_lock_manual_data_and_foreign_devices(self):
+        self.wan['errors'] = [{'code': 'NO_DEVICE'}]
+        for update in ({'state': 'failed'}, {'state': 'locked'},
+                       {'state': 'initializing'}, {'sim': '--'},
+                       {'device': '/dev/ttyUSB0'}):
+            self.modem = copy.deepcopy(MODEM)
+            self.modem['generic'].update(update)
+            if 'sim' in update:
+                self.modem['generic']['state'] = 'enabled'
+                self.modem['3gpp']['packet-service-state'] = 'detached'
+            self.recovery = Recovery()
+            self.recovery.evaluate()
+        self.assertFalse(self.resumes())
+        self.modem = copy.deepcopy(MODEM)
+        self.wan['autostart'] = False
+        self.recovery.evaluate()
+        self.assertFalse(self.resumes())
+
+    def test_no_device_does_not_resume_with_explicit_radio_off(self):
+        self.wan['errors'] = [{'code': 'NO_DEVICE'}]
+        with patch.dict(GLOBALS, radio_allowed=lambda: False), \
+             patch.object(Recovery, 'enable_other_sim_services'):
+            self.recovery.evaluate()
+        self.assertFalse(self.resumes())
 
     def test_disabled_data_sim_keeps_other_sim_services_without_data_retry(self):
         with tempfile.TemporaryDirectory() as directory:

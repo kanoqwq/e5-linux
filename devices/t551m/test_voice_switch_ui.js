@@ -38,8 +38,11 @@ const M = {
     callLockGet: () => Promise.resolve(live),
     waitLockJob: () => new Promise((resolve, reject) => { finish = resolve; fail = reject; })
 };
-const page = new Function('view', 'poll', 'M', 'L', source)(
-    {extend: x => x}, {add() {}}, M, {resolveDefault: x => Promise.resolve(x)});
+// LuCI normally injects this separate settings widget. This suite exercises
+// voice switches; keep the unrelated widget inert, as with the poll service.
+const autoMode = {attach: () => ({update() {}, reload() {}})};
+const page = new Function('view', 'poll', 'M', 'L', 'AutoMode', source)(
+    {extend: x => x}, {add() {}}, M, {resolveDefault: x => Promise.resolve(x)}, autoMode);
 const flush = async () => { for (let i=0;i<25;i++) await Promise.resolve(); };
 async function main() {
     assert(source.includes('role="switch"'));

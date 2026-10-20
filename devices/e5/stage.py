@@ -71,8 +71,8 @@ def stage_nv(root):
     if text.count(anchor) != 1:
         raise ValueError('Unexpected vendor cmdline mount')
     text = text.replace(anchor, anchor + '''
-if [ "$modem_slot" = "a" ] && [ -r /proc/bootconfig ]; then
-  sed 's/\\(androidboot.slot_suffix *= *"\\)_b"/\\1_a"/' /proc/bootconfig > /run/e5-bootconfig.android
+if [ "$modem_slot" != "current" ] && [ -r /proc/bootconfig ]; then
+  sed "s/\\(androidboot.slot_suffix *= *\\\"\\)_[ab]\\\"/\\1_$modem_slot\\\"/" /proc/bootconfig > /run/e5-bootconfig.android
   mountpoint -q "$A/proc/bootconfig" || mount --bind /run/e5-bootconfig.android "$A/proc/bootconfig"
 fi
 ''')

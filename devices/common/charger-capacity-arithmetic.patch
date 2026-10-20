@@ -1,0 +1,11 @@
+--- a/drivers/power/supply/charger-manager.c
++++ b/drivers/power/supply/charger-manager.c
+@@ -5417,7 +5417,7 @@
+ 		return ret;
+ 	}
+ 
+-	*charge_now = total_uah * cm->desc->cap / CM_CAP_FULL_PERCENT;
++	*charge_now = div_s64((s64)total_uah * cm->desc->cap, CM_CAP_FULL_PERCENT);
+ 
+ 	return ret;
+ }

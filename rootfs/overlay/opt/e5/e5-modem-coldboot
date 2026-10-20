@@ -28,12 +28,32 @@ T551M_EDITS = (
     # VA 0xa6c0: movs r0,63 -> movs r0,34 before load_modem_img().
     (0x96C0, bytes.fromhex('3f20'), bytes.fromhex('2220')),
 )
+K1_EDITS = (
+    # AngelCare.K1.YUAN.YD.T1.0 ARM64, file offsets equal VAs in this segment.
+    # 0xcf08 calls modem_has_been_boot() (0xc650, checks /dev/sctl_pm).
+    (0xCF0C, bytes.fromhex('f303002a'), bytes.fromhex('f3031f2a')),
+    # 0xcf54 calls load_modem_img(0xa290): bit1 NR/CP, bit5 CH; bit0 PM
+    # is excluded from both its stop and load/start branches.
+    (0xCF50, bytes.fromhex('e0078052'), bytes.fromhex('40048052')),
+)
+YH41S_EDITS = (
+    # ZTE 7546N/P720S11 stock ARM64. 0xd1b8 calls the 0xc900 boot
+    # predicate (/dev/sctl_pm); PM being alive does not mean NR/CH is alive.
+    (0xD1BC, bytes.fromhex('f303002a'), bytes.fromhex('f3031f2a')),
+    # 0xd204 calls load_modem_img(0xa540). Bits 1 and 5 load NR/CH;
+    # bit0 stops/loads PM and bit3 also enters the PM/CP stop path: omit both.
+    (0xD200, bytes.fromhex('e0078052'), bytes.fromhex('40048052')),
+)
 # Exact recipient builds only: ELF class, machine, and instruction edits.
 PROFILES = {
     'a0dfdb32b616671febdebe23efce10efd3f9abc0cbcf3b19ff22d7c8ebb0a5e2':
         (2, 183, EDITS),
     '317eb996768a1978aa6b983a0d856cee47458b3bc72fa17ff88bc97f9df52109':
         (1, 40, T551M_EDITS),
+    '43a3bc8c4730b87431d4fc8d90a3652b2458ef8bc9f59772685d4016cc7819a3':
+        (2, 183, K1_EDITS),
+    'e76433bb853bfc5557e6397ab568666cabe8acf0ef12056783b822564df0dd75':
+        (2, 183, YH41S_EDITS),
 }
 
 

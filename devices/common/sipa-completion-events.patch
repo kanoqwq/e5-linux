@@ -1,0 +1,90 @@
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_eth.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_eth.c
+@@ -111,6 +111,16 @@
+ 		stats->tx_dropped++;
+ 		dev_kfree_skb_any(skb);
+ 		return NETDEV_TX_OK;
++	}
++
++	/* The synthetic header needs private, sufficiently large headroom. */
++	if (skb->mac_header == skb->network_header) {
++		ret = skb_cow_head(skb, ETH_HLEN);
++		if (unlikely(ret)) {
++			stats->tx_dropped++;
++			dev_kfree_skb_any(skb);
++			return NETDEV_TX_OK;
++		}
+ 	}
+ 
+ 	netid = pdata->netid;
+@@ -141,7 +151,11 @@
+ 	 */
+ 	if (likely(skb_headroom(skb) >= ETH_HLEN)) {
+ 		if (skb->mac_header == skb->network_header) {
+-			skb_push(skb, ETH_HLEN);
++			struct ethhdr *eth = (struct ethhdr *)skb_push(skb, ETH_HLEN);
++
++			/* Raw-IP has no L2 header. Never expose uninitialized headroom. */
++			memset(eth, 0, ETH_HLEN);
++			eth->h_proto = skb->protocol;
+ 			pushed_header = true;
+ 		}
+ 	}
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c
+@@ -49,13 +49,15 @@
+ {
+ 	struct sipa_skb_sender *sender = (struct sipa_skb_sender *)priv;
+ 
+-	if (evt & SIPA_RECV_WARN_EVT) {
+-		dev_err(sender->dev,
+-			"sipa overflow on ep:%d evt = 0x%x\n",
++	/* ERRORCODE is a completed packet rejection, not FIFO exhaustion. */
++	if (evt & (SIPA_HAL_TXFIFO_FULL_INT | SIPA_HAL_TXFIFO_OVERFLOW)) {
++		dev_err_ratelimited(sender->dev,
++			"SIPA TX FIFO pressure on ep:%d evt=0x%x\n",
+ 			sender->ep->id, evt);
+ 		sender->no_free_cnt++;
++	}
++	if (evt & SIPA_RECV_WARN_EVT)
+ 		wake_up(&sender->free_waitq);
+-	}
+ 
+ 	if (evt & SIPA_RECV_EVT)
+ 		wake_up(&sender->free_waitq);
+@@ -172,6 +174,14 @@
+ 		if (!node) {
+ 			dev_err_ratelimited(sender->dev, "sender node is null\n");
+ 			break;
++		}
++
++		if (node->err_code) {
++			sender->completion_error_cnt++;
++			dev_warn_ratelimited(sender->dev,
++				"SIPA TX packet rejected: code=%u src=%u dst=%u netid=%u len=%u\n",
++				node->err_code, node->src, node->dst,
++				node->net_id, node->length);
+ 		}
+ 
+ 		/* An errored completion still owns a buffer that must be reclaimed. */
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_priv.h
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_priv.h
+@@ -305,6 +305,7 @@
+ 
+ 	u32 no_mem_cnt;
+ 	u32 no_free_cnt;
++	u32 completion_error_cnt;
+ 	u32 enter_flow_ctrl_cnt;
+ 	u32 exit_flow_ctrl_cnt;
+ };
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_debugfs.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_debugfs.c
+@@ -50,6 +50,8 @@
+ 	seq_printf(s, "[SENDER] no_mem_cnt = %d no_free_cnt = %d\n",
+ 		   ipa->sender->no_mem_cnt, ipa->sender->no_free_cnt);
+ 
++	seq_printf(s, "[SENDER] completion_error_cnt = %u\n",
++		   ipa->sender->completion_error_cnt);
+ 	seq_printf(s, "[SENDER] enter_flow_ctrl_cnt = %d\n",
+ 		   ipa->sender->enter_flow_ctrl_cnt);
+ 

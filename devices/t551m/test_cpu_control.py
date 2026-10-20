@@ -286,7 +286,7 @@ class VoltageFirmwareTest(unittest.TestCase):
         self.assertFalse(self.check_hashes(sorted(module.VERIFIED_VOLTAGE_FIRMWARE)))
 
     def test_m8_firmware_requires_its_soc_and_matching_slots(self):
-        digest = next(iter(module.VERIFIED_M8_VOLTAGE_FIRMWARE))
+        digest = next(iter(module.VERIFIED_UMS9620_VOLTAGE_FIRMWARE))
         self.assertFalse(self.check_hashes([digest, digest]))
         self.compatible.write_bytes(b'sprd,ums512-base\0sprd,ums9620\0')
         (self.control.runtime / module.VOLTAGE_CAPABILITY_CACHE).unlink()
@@ -317,6 +317,7 @@ class VoltageFirmwareTest(unittest.TestCase):
         self.control.runtime.mkdir(parents=True)
         (self.control.runtime / 'voltage-supported').write_text('0')
         (self.control.runtime / 'voltage-supported-v3').write_text('0')
+        (self.control.runtime / 'voltage-supported-v5').write_text('0')
         digest = next(iter(module.VERIFIED_VOLTAGE_FIRMWARE))
         self.assertTrue(self.check_hashes([digest, digest]))
         with patch.object(module.hashlib, 'sha256') as sha:
@@ -329,6 +330,28 @@ class VoltageFirmwareTest(unittest.TestCase):
         self.compatible.write_bytes(b'sprd,ums512-base\0sprd,ums9620\0')
         (self.control.runtime / module.VOLTAGE_CAPABILITY_CACHE).unlink()
         self.assertFalse(self.check_hashes([digest, digest]))
+
+    def test_41s_requires_ums9620_and_identical_verified_sml_slots(self):
+        digest = 'cdfd5fb2186f00ab18e6aca37ee54053704a1e6252dc415aeed190d6892db71b'
+        self.assertFalse(self.check_hashes([digest, digest]))
+        self.compatible.write_bytes(b'sprd,ums9620\0')
+        (self.control.runtime / module.VOLTAGE_CAPABILITY_CACHE).unlink()
+        self.assertTrue(self.check_hashes([digest, digest]))
+        (self.control.runtime / module.VOLTAGE_CAPABILITY_CACHE).unlink()
+        other = '31425dab4aca8450757ac4207de419d06643b7204776fc7e8da5aab1d68814df'
+        self.assertFalse(self.check_hashes([digest, other]))
+
+    def test_k1_requires_ums9620_and_identical_verified_sml_slots(self):
+        digest = 'efc2e6cf3a83a1dbbedecbea12673a7320520632b7b3f59c9072276f9b24d5eb'
+        self.assertFalse(self.check_hashes([digest, digest]))
+        self.compatible.write_bytes(b'sprd,ums9620\0')
+        cache = self.control.runtime / module.VOLTAGE_CAPABILITY_CACHE
+        cache.unlink()
+        self.assertTrue(self.check_hashes([digest, digest]))
+        for other in ('8207aa5789cbfc5e0e9520c0c34b15b4ae4048f445f4e48bfb802b394a60f99e',
+                      '31425dab4aca8450757ac4207de419d06643b7204776fc7e8da5aab1d68814df'):
+            cache.unlink()
+            self.assertFalse(self.check_hashes([digest, other]))
 
 
 if __name__=='__main__':

@@ -55,7 +55,7 @@ fi
 # collectors (selected with T551M_AT_CHANNEL). Keep nr1 and
 # the URC rings with ModemManager; never fall back to opening either device.
 profile=$(cat /etc/e5/device-profile 2>/dev/null)
-if [ "$profile" = t551m ] || [ "$profile" = e5 ] || [ "$profile" = m8 ] || [ "$profile" = t512n ]; then
+if [ "$profile" = t551m ] || [ "$profile" = e5 ] || [ "$profile" = m8 ] || [ "$profile" = t512n ] || [ "$profile" = yuanhang41s ] || [ "$profile" = k1 ]; then
     case "$norm" in
         # E5SMS is a virtual command implemented by MM, not modem firmware.
         # Existing per-SIM SMS operations must retain MM's port-local charset,

@@ -1,9 +1,9 @@
 #!/bin/busybox sh
 # e5-linux standalone initramfs init for the Rongyue E5 (Unisoc UMS9621 / ums9158_1h10).
 #
-# Booted from slot b. Follows the mu300-linux design:
+# Booted from the non-Android slot. Follows the mu300-linux design:
 #   * load the rebuilt modules in a fixed order (boot/module-order.txt)
-#   * restore slot a in misc unless /etc/e5linux/default-boot says otherwise,
+#   * restore the Android slot in misc unless the saved default says otherwise,
 #     so a Linux boot that never reaches userspace falls back to Android
 #   * bring up a USB gadget (ECM network + CDC-ACM console) before anything else
 #   * mount the Linux root filesystem and switch_root to systemd
@@ -11,7 +11,7 @@
 #     reboot back to Android after a timeout
 #
 # Everything is written to /dev/kmsg (-> ramoops console) and to a 4 MiB block
-# inside boot_b, which survives a cold power cycle (pstore does not).
+# inside the OpenWrt boot partition, which survives a cold power cycle.
 /bin/busybox mkdir -p /bin /sbin /proc /sys /dev /run /tmp /root /etc
 /bin/busybox --install -s /bin
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root TERM=vt100
@@ -41,7 +41,7 @@ log() {
     echo "$(cut -d' ' -f1 /proc/uptime) $*" >> /run/stages
 }
 
-# Persistent log: 4 MiB at 56 MiB inside boot_b, past the image and its AVB data.
+# Persistent log: 4 MiB at 56 MiB in the OpenWrt boot partition.
 # boot/build-boot-image.py refuses to build an image that overlaps this block.
 bootb=
 PERSIST_SEEK_BLOCKS=14336      # 56 MiB / 4096
@@ -135,20 +135,31 @@ echo 1 > /proc/sys/kernel/softlockup_panic
 echo 1 > /proc/sys/kernel/panic_on_oops
 echo 1 > /proc/sys/kernel/sysrq
 
-# Locate misc and boot_b.  Reading the partition names out of sysfs needs no
+# Locate misc and the OpenWrt boot partition. Reading sysfs names needs no
 # modules, so this is attempted before the module pass as well -- but on this
 # platform the eMMC partitions do not appear in /sys/class/block for several
 # seconds, and an attempt that ran only here came up empty for twenty seconds
-# straight (misc=none boot_b=none, and with no boot_b there is no log at all).
+# straight (misc=none linux_boot=none; no identified Linux boot means no log).
 # So the authoritative attempt stays after the module pass, and the early one is
 # best effort: it only exists so that a crash during module loading still leaves
-# a record in boot_b.
+# a record in the OpenWrt slot, never the preserved Android slot.
+linux_slot=
+load_linux_slot() {
+    local declared suffix
+    declared=$(cat /etc/e5/linux-slot 2>/dev/null)
+    suffix=$(dd if=/etc/misc-bc-slot-b-trial.bin bs=1 count=2 2>/dev/null)
+    case "$suffix" in _a) linux_slot=a ;; _b) linux_slot=b ;; *) linux_slot=; return 1 ;; esac
+    # Legacy ramdisks lack the role file: derive from their Linux trial block,
+    # never from a fixed physical slot. Conflicting role metadata is an error.
+    [ -z "$declared" ] || [ "$declared" = "$linux_slot" ] || { linux_slot=; return 1; }
+}
+load_linux_slot || log 'stage=linux-slot-unknown persistent-boot-writes-disabled'
 find_partitions() {
     n=0
     while [ "$n" -lt "${1:-20}" ]; do
         for u in /sys/class/block/mmcblk*p*/uevent; do
             grep -qx PARTNAME=misc "$u" 2>/dev/null && misc=/dev/$(basename "$(dirname "$u")")
-            grep -qx PARTNAME=boot_b "$u" 2>/dev/null && bootb=/dev/$(basename "$(dirname "$u")")
+            [ -n "$linux_slot" ] && grep -qx "PARTNAME=boot_$linux_slot" "$u" 2>/dev/null && bootb=/dev/$(basename "$(dirname "$u")")
         done
         [ -b "$misc" ] && return 0
         n=$((n + 1))
@@ -388,10 +399,11 @@ else
     log "stage=wdt-skip no-devmem"
 fi
 find_partitions 20 || true
-log "stage=partitions misc=${misc:-none} boot_b=${bootb:-none}"
+log "stage=partitions misc=${misc:-none} linux_slot=${linux_slot:-unknown} linux_boot=${bootb:-none}"
 persist
 
 write_misc_bc() {  # write_misc_bc FILE STAGE
+    case "$linux_slot" in a|b) ;; *) log 'stage=linux-slot-unknown misc-unchanged'; return 1 ;; esac
     [ -n "$misc" ] || { log "stage=misc-NOT-FOUND"; return 1; }
     dd if="$1" of="$misc" bs=1 seek=2048 conv=notrunc 2>/dev/null
     sync
@@ -697,15 +709,17 @@ sd_wait() {
 # selection falls through to the image path below.
 part_root() {
     local u e dev
+    PARTAUTO=
     [ -n "$misc" ] || return 1
     e=${misc#/dev/}; e=${e%%p*}
     for u in /sys/class/block/${e}p*/uevent; do
         grep -qx PARTNAME=e5root "$u" 2>/dev/null || continue
         dev=/dev/$(basename "$(dirname "$u")")
-        mount -t ext4 -o ro,noatime "$dev" /sdtry 2>/dev/null || continue
+        mount -t ext4 -o ro,noload,noatime "$dev" /sdtry 2>/dev/null || continue
         if [ -x /sdtry/sbin/init ] && [ -f /sdtry/etc/e5/part-root ]; then
             PARTTRIAL=
             [ -f /sdtry/etc/e5/part-trial ] && PARTTRIAL=$(cat /sdtry/etc/e5/part-trial 2>/dev/null)
+            [ ! -f /sdtry/etc/e5/part-autoboot ] || PARTAUTO=1
             umount /sdtry
             PARTROOT=$dev
             return 0
@@ -713,6 +727,14 @@ part_root() {
         umount /sdtry
     done
     return 1
+}
+# Root discovery must not depend on wcn_bsp being in the early module list or
+# on where its firmware came from. A reduced initramfs can load WCN only after
+# switch_root, and a firmware overlay can bypass early_device_firmware().
+# Respect an explicit image/card selection and registered SD metadata.
+part_autoboot() {
+    [ -z "$e5_trial" ] && [ -z "$SDMETA" ] && [ -z "$want" ] &&
+        part_root && [ "$PARTAUTO" = 1 ]
 }
 # The internal partition system, when userdata names it (boot-os = part).  A
 # trial marker on it, like the card's sd-trial, makes a boot that dies before
@@ -723,6 +745,9 @@ part_root() {
 [ "$(boot_arg e5.root)" = part ] && want=part
 if [ -f /run/part-default ] && [ -z "$SDMETA" ] && { [ -z "$want" ] || [ "$want" = part ]; }; then
     want=part
+elif part_autoboot; then
+    want=part
+    log "stage=part-autoboot-detected dev=$PARTROOT"
 fi
 if [ -z "$e5_trial" ] && [ "$want" = part ]; then
     if part_root && [ "$PARTTRIAL" != 0 ] &&

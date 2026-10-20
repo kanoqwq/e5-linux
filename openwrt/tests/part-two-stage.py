@@ -22,10 +22,192 @@ api = runpy.run_path(str(TOP/'openwrt/bundle/part-two-stage.py'))
 spec = importlib.util.spec_from_file_location('flash', TOP/'openwrt/bundle/flash.py')
 flash = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(flash)
+fixtures = runpy.run_path(str(TOP/'openwrt/tests/installer-slot-roles.py'))
+
+
+def boot_fixture():
+    return bytearray(fixtures['boot']())
 
 
 class TwoStage(unittest.TestCase):
-    def prepare_case(self, mounted=False, held=False, wrong_cid=False):
+    def test_old_missing_request_retry_requires_unchanged_gpt_and_is_not_repeated(self):
+        import hashlib, json
+        for fault in ('none', 'primary', 'secondary', 'missing', 'identity', 'partial',
+                      'recovery', 'control', 'writing', 'new-handoff', 'flash', 'rearming', 'boot-backup'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); files = root/'files'; files.mkdir()
+                (files/'boot.img').write_bytes(boot_fixture())
+                (files/'openwrt.ext4.gz').write_bytes(b'payload')
+                digest = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+                bc = fixtures['control']('b')
+                (root/'boot-control-before.bin').write_bytes(bc)
+                (root/'boot-a-before.img').write_bytes(boot_fixture())
+                (root/'bootchain.tar').write_bytes(b'chain backup fixture')
+                if fault == 'boot-backup': (root/'bootchain.tar').unlink()
+                original = {'gpt-primary.bin':b'P'*(34*512), 'gpt-backup.bin':b'B'*(33*512)}
+                for name, data in original.items(): (root/name).write_bytes(data)
+                if fault == 'missing': (root/'gpt-backup.bin').unlink()
+                data = dict(node='mmcblk0p73',cid='a'*32,start=2048,size=16777216)
+                state = dict(version=2,phase='awaiting-android',token='c'*32,serial='fixture',model='K1',
+                    android_slot='b',linux_slot='a',data=data,target=8388608,need=8388608,grow=1,
+                    raw_size=2<<30,boot_sha=digest(files/'boot.img'),image_sha=digest(files/'openwrt.ext4.gz'),
+                    apn='',ssid='test',key='12345678')
+                if fault == 'writing': state['phase']='writing'
+                if fault == 'new-handoff': state['request_handoff']=1
+                if fault == 'rearming': state.update(phase='rearming',request_handoff=1)
+                rows = {'userdata':dict(data)}
+                if fault == 'identity': rows['userdata']['cid']='b'*32
+                if fault == 'partial': rows['userdata']['size']-=2048
+                path = root/'transaction.json'; api['save'](path,state)
+                events=[]; remote=[b'']
+                def checked(stage, script, **kwargs):
+                    if script.startswith('cat /sys'): return '20000000'
+                    if 'count=2048' in script and 'od -An' in script:
+                        return (b'boot-recovery'.ljust(2048,b'\0') if fault == 'recovery' else bytes(2048)).hex()
+                    if 'of=/data/local/tmp/e5-gpt-recheck' in script:
+                        name = 'gpt-primary.bin' if 'count=34;' in script else 'gpt-backup.bin'
+                        remote[0] = original[name]
+                        if fault == ('primary' if name == 'gpt-primary.bin' else 'secondary'):
+                            remote[0] = b'X'+remote[0][1:]
+                    return ''
+                def adb(*args,**kwargs):
+                    if args[0]=='pull': Path(args[2]).write_bytes(remote[0])
+                    if args[0]=='reboot': events.append('reboot')
+                    return 'fixture'
+                def flash(g,p):
+                    persisted=json.loads(path.read_text())
+                    self.assertEqual(persisted['phase'],'rearming')
+                    self.assertEqual(persisted['request_handoff'],1)
+                    payload=fixtures['unpack_roles'](p.read_bytes())
+                    self.assertTrue(payload['etc/e5/boot-request'].startswith(b'e5.part_prepare='))
+                    events.append('boot')
+                    if fault=='flash': raise ValueError('injected readback failure')
+                g=dict(F=str(files),TMP='/data/local/tmp',current_slots=lambda:('b','a'),
+                    adb=adb,sh=lambda _: 'K1',sha256=digest,su_checked=checked,
+                    su=lambda _:hashlib.sha256(remote[0]).hexdigest()+'  remote',
+                    read_boot_control=lambda: bytes(32) if fault=='control' else bc,
+                    install_preflight=lambda:events.append('preflight'),
+                    arm_slot_b=lambda:events.append('arm'))
+                with patch.dict(api['finish'].__globals__,probe=lambda _:rows,flash_boot=flash,
+                                wait_android=lambda *args:events.append('wait')):
+                    if fault in ('none','rearming'):
+                        api['finish'](g,SimpleNamespace(),path,state)
+                        self.assertEqual(events,['preflight','boot','arm','reboot','wait'])
+                        self.assertEqual(state['phase'],'awaiting-android')
+                        events.clear()
+                        with self.assertRaises(ValueError): api['finish'](g,SimpleNamespace(),path,state)
+                        self.assertEqual(events,[])
+                    else:
+                        with self.assertRaises((ValueError,FileNotFoundError)):
+                            api['finish'](g,SimpleNamespace(),path,state)
+                        self.assertNotIn('arm',events); self.assertNotIn('reboot',events)
+                        if fault != 'flash': self.assertNotIn('boot',events)
+                for name, contents in original.items():
+                    if (root/name).exists(): self.assertEqual((root/name).read_bytes(),contents)
+
+    def test_recovery_request_classification_is_exact_and_fail_closed(self):
+        self.assertEqual(api['recovery_message_kind'](bytes(2048)), 'empty')
+        loader = b'bootonce-bootloader'.ljust(2048, b'\0')
+        self.assertEqual(api['recovery_message_kind'](loader), 'bootloader-only')
+        bad = [b'', bytes(2047), bytes(2049), b'boot-recovery'.ljust(2048, b'\0'),
+               b'update-radio'.ljust(2048, b'\0'), b'boot-fastboot'.ljust(2048, b'\0'),
+               b'\xff' * 2048]
+        for offset in (20, 32, 64, 832, 900, 2047):
+            data = bytearray(loader); data[offset] = 1; bad.append(bytes(data))
+        for message in bad:
+            with self.subTest(size=len(message), head=message[:24]), self.assertRaises(ValueError):
+                api['recovery_message_kind'](message)
+
+    @unittest.skipUnless(os.name != 'nt', 'Requires a POSIX shell and regular files')
+    def test_clear_bootloader_command_preserves_slots_and_vendor_tail(self):
+        loader = b'bootonce-bootloader'.ljust(2048, b'\0')
+        control = bytes(range(32))
+        import hashlib
+        for shell in (['sh'], ['busybox', 'ash']):
+            for fault in ('none', 'new-recovery', 'changed-slot', 'truncated', 'no-op-write'):
+                with self.subTest(shell=shell, fault=fault), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / 'misc'
+                    before = loader + control + b'VENDOR-UNCHANGED' * 400
+                    if fault == 'new-recovery':
+                        before = b'boot-recovery'.ljust(2048,b'\0') + before[2048:]
+                    elif fault == 'changed-slot':
+                        before = before[:2048] + b'X' * 32 + before[2080:]
+                    elif fault == 'truncated':
+                        before = before[:2000]
+                    path.write_bytes(before)
+                    script = api['clear_bootloader_command_script'](loader, control)
+                    script = script.replace('/dev/block/by-name/misc', str(path))
+                    if fault == 'no-op-write':
+                        script = 'dd() { case "$*" in *of=*) return 0;; *) command dd "$@";; esac; }; ' + script
+                    result = subprocess.run([*shell, '-c', script], text=True, capture_output=True)
+                    if fault == 'none':
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(path.read_bytes(), bytes(32) + before[32:])
+                        self.assertEqual(hashlib.sha256(path.read_bytes()[2048:]).digest(),
+                                         hashlib.sha256(before[2048:]).digest())
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(path.read_bytes(), before)
+
+    def test_start_backs_up_and_checkpoints_before_clear_and_never_arms_on_failure(self):
+        for command, booted, clear_fails in [('loader', True, False), ('loader', True, True),
+                                             ('loader', False, False), ('recovery', True, False)]:
+            with self.subTest(command=command, booted=booted, clear_fails=clear_fails), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); files = root/'files'; files.mkdir()
+                image = boot_fixture(); image[:8] = b'ANDROID!'
+                struct.pack_into('<I', image, 40, 4)
+                image[44:1580] = b'e5.part_v=2'.ljust(1536,b'\0')
+                for name, data in [('boot.img',image),('openwrt.ext4.gz',b'payload'),
+                                   ('ext4-tools.tar',b'tools'),('part-write.sh',b'writer')]:
+                    (files/name).write_bytes(data)
+                raw = (b'bootonce-bootloader' if command == 'loader' else b'boot-recovery').ljust(2048,b'\0')
+                events=[]; saved=[]
+                class Gui:
+                    def backup_base(self): return str(root)
+                    def saved(self,path,state):
+                        self_path=Path(path)
+                        self_data=__import__('json').loads(self_path.read_text())
+                        self_bcb=(self_path.parent/'bcb-before.bin').read_bytes()
+                        self_state=state.copy()
+                        saved.append((self_data,self_bcb,self_state))
+                        events.append('checkpoint')
+                def checked(stage, script, **options):
+                    if 'count=2048' in script and 'od -An' in script: return raw.hex()
+                    if 'bcb_hash()' in script:
+                        events.append('clear')
+                        self.assertIn('checkpoint',events)
+                        self.assertEqual(saved[0][1],raw)
+                        self.assertEqual(options['effect'],'two-stage-clear-bootloader-command')
+                        if clear_fails: raise ValueError('injected clearance failure')
+                    return ''
+                def adb(*args,**kwargs):
+                    if args[0]=='pull': Path(args[2]).write_bytes(b'chain')
+                    events.append(args[0]); return 'fixture-serial'
+                g=dict(F=str(files),B=str(root),GUI=Gui(),TMP='/data/local/tmp',
+                       current_slots=lambda:('b','a'), read_boot_control=lambda:bytes(range(32)),
+                       su_checked=checked, sh=lambda cmd:'1' if booted else '0',
+                       adb=adb,su=lambda cmd:'f'*64+'  file',sha256=lambda p:'f'*64,
+                       bootchain=lambda mode:events.append('chain'),arm_slot_b=lambda:events.append('arm'))
+                ns=api['start'].__globals__
+                with patch.dict(ns,probe=lambda _: {'userdata':dict(node='mmcblk0p73',cid='a'*32,start=2048,size=16777216)},
+                                backup=lambda *a:events.append('backup'),backup_gpt=lambda *a:events.append('gpt-backup'),
+                                flash_boot=lambda *a:events.append('boot-readback'),
+                                wait_android=lambda *a:events.append('wait')):
+                    if command == 'recovery' or not booted or clear_fails:
+                        with self.assertRaises(ValueError):
+                            api['start'](g,SimpleNamespace(),'mmcblk0p73',2048,4096,1,2<<30,'','test','12345678')
+                        self.assertNotIn('arm',events)
+                        self.assertNotIn('reboot',events)
+                        if command == 'recovery' or not booted:
+                            self.assertFalse(saved)
+                    else:
+                        api['start'](g,SimpleNamespace(),'mmcblk0p73',2048,4096,1,2<<30,'','test','12345678')
+                        self.assertLess(events.index('backup'),events.index('checkpoint'))
+                        self.assertLess(events.index('boot-readback'),events.index('clear'))
+                        self.assertLess(events.index('clear'),events.index('arm'))
+                        self.assertLess(events.index('arm'),events.index('reboot'))
+
+    def prepare_case(self, mounted=False, held=False, wrong_cid=False, embedded=False):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             for name in ('run', 'etc', 'dev', 'sys/class/block/mmcblk0/device',
@@ -43,6 +225,10 @@ class TwoStage(unittest.TestCase):
             bc=bytes(range(32))
             request=':'.join(['c'*32,'a'*32,'mmcblk0p70','2048','16777216','8388608','8388608',bc.hex()])
             (root/'proc/cmdline').write_text('console=tty0 e5.part_prepare='+request+'\n')
+            if embedded:
+                (root/'proc/cmdline').write_text('console=tty0 rdinit=/init\n')
+                (root/'etc/e5').mkdir()
+                (root/'etc/e5/boot-request').write_text('e5.part_prepare='+request+'\n')
             (root/'etc/part-progress.sh').write_text(
                 'part_progress_start() { :; }\npart_stop() { :; }\nlog() { :; }\n')
             tool=root/'usr/bin/ucode'
@@ -75,17 +261,22 @@ class TwoStage(unittest.TestCase):
                     self.assertTrue(stream.read(100).startswith(b'E5-PART-PREPARED-V2 '+b'c'*32+b'\n'))
 
     def test_prepare_recovery_handoff_and_reject_busy_or_wrong_device(self):
-        for options in ({}, {'mounted':True}, {'held':True}, {'wrong_cid':True}):
+        for options in ({}, {'mounted':True}, {'held':True}, {'wrong_cid':True},
+                        {'embedded':True}, {'embedded':True,'wrong_cid':True},
+                        {'embedded':True,'mounted':True}, {'embedded':True,'held':True}):
             with self.subTest(options=options): self.prepare_case(**options)
 
     def test_boot_command_preserves_all_payloads_and_footer(self):
-        boot = bytearray(b'x' * 8192)
+        boot = boot_fixture()
         boot[:8] = b'ANDROID!'
         struct.pack_into('<I', boot, 40, 4)
         boot[44:1580] = b'console=tty0 e5.part_v=2'.ljust(1536, b'\0')
         result = api['boot_command'](bytes(boot), 'e5.root=part')
-        self.assertEqual(result[:44], boot[:44])
-        self.assertEqual(result[1580:], boot[1580:])
+        self.assertEqual(result[4096:8224], boot[4096:8224])
+        self.assertEqual(result[-64:-52], boot[-64:-52])
+        overlay = fixtures['unpack_roles'](result)
+        self.assertEqual(overlay['etc/e5/boot-request'], b'e5.root=part\n')
+        self.assertEqual(overlay['etc/boot-args.sh'], (TOP/'boot/boot-args.sh').read_bytes())
         self.assertIn(b'e5.root=part', result[44:1580])
         with self.assertRaises(ValueError):
             api['boot_command'](result, 'e5.part_prepare=other')
@@ -122,7 +313,7 @@ class TwoStage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             files = root/'files'; files.mkdir()
-            boot = bytearray(b'x' * 8192)
+            boot = boot_fixture()
             boot[:8] = b'ANDROID!'
             struct.pack_into('<I', boot, 40, 4)
             boot[44:1580] = b'console=tty0 e5.part_v=2'.ljust(1536, b'\0')
@@ -141,6 +332,7 @@ class TwoStage(unittest.TestCase):
                 'e5root': dict(node='mmcblk0p71', cid='a'*32, start=8390656, size=20971520)}
             try:
                 api['reinstall'](dict(
+                    current_slots=lambda: ('a','b'),
                     F=str(files), B=str(root/'package'),
                     find_adb=lambda: None, android_checks=lambda: None,
                     adb=lambda *a, **k: 'SERIAL123', sh=lambda *a, **k: 'T551M',
@@ -178,7 +370,7 @@ class TwoStage(unittest.TestCase):
         for phase, fault in [('writing','root'), ('installed','boot'), ('installed','chain')]:
             with self.subTest(phase=phase,fault=fault), tempfile.TemporaryDirectory() as directory:
                 root=Path(directory); files=root/'files'; files.mkdir()
-                boot=bytearray(8192); boot[:8]=b'ANDROID!'
+                boot=boot_fixture(); boot[:8]=b'ANDROID!'
                 struct.pack_into('<I', boot, 40, 4)
                 boot[44:1580]=b'e5.part_v=2'.ljust(1536,b'\0')
                 (files/'boot.img').write_bytes(boot)
@@ -198,7 +390,7 @@ class TwoStage(unittest.TestCase):
                 def sync_chain(mode):
                     chain.append(mode)
                     if fault=='chain':raise SystemExit('injected boot-chain failure')
-                g=dict(F=str(files),TMP='/data/local/tmp',adb=lambda *a,**k:'SERIAL',
+                g=dict(current_slots=lambda:('a','b'),bind_boot_image=lambda data:data,F=str(files),TMP='/data/local/tmp',adb=lambda *a,**k:'SERIAL',
                        android_shell=lambda script,args: 'sh '+script+' '+args,
                        sh=lambda *a,**k:'T551M',sha256=lambda *a:'f'*64,
                        busy=lambda *a:contextlib.nullcontext(),su_checked=checked,

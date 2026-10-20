@@ -30,3 +30,15 @@ with tempfile.TemporaryDirectory() as temporary:
   assert run('arm',str(root/f'bad-{offset}')).returncode!=0
   assert misc.read_bytes()==image and not (root/f'bad-{offset}').exists()
  print('Magisk boot control: CRC, format, Android fallback, backup and bounded write checks passed')
+ for android in ('a','b'):
+  current=bytearray(bc);at=12+2*(android=='b');other=12+2*(android=='a')
+  current[:2]=('_'+android).encode();current[at]=0x9f;current[other]=0x1e
+  struct.pack_into('<I',current,28,zlib.crc32(current[:28]))
+  image=bytearray(original);image[2048:2080]=current;misc.write_bytes(image)
+  backup=root/('backup-'+android)
+  assert run('check',android).returncode==0
+  assert run('arm',str(backup),android).returncode==0
+  new=misc.read_bytes()[2048:2080]
+  assert new[at]==0x9e and new[other]==0x2f and new[1]==ord('b' if android=='a' else 'a')
+  assert backup.read_bytes()==current and new[16:28]==current[16:28]
+ print('Magisk boot control: both Android roles and opposite Linux targets passed')

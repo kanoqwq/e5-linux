@@ -21,7 +21,7 @@ import time
 import zipfile
 
 TOP = Path(__file__).resolve().parents[1]
-MODELS = {'e5': ['E5'], 't551m': ['T551M'], 'm8': ['VIPME M8'], 't512n': ['T512N']}
+MODELS = {'e5': ['E5'], 't551m': ['T551M'], 'm8': ['VIPME M8'], 't512n': ['T512N'], 'yuanhang41s': ['ZTE 7546N'], 'k1': ['angelcare K1']}
 
 
 def digest(path):
@@ -70,7 +70,8 @@ def main():
     a.work.mkdir(parents=True)
     root = a.work / 'root'
     release = runpy.run_path(str(TOP / 'upstream/check-container-support.py'))['check'](a.kernel)
-    if f'-{a.profile}-' not in release:
+    kernel_tags = ('-yuanhang41s-', '-yh41s-') if a.profile == 'yuanhang41s' else (f'-{a.profile}-',)
+    if not any(tag in release for tag in kernel_tags):
         raise ValueError('Wrong kernel profile: ' + release)
     if b'e5.openwrt=' in (a.kernel / 'Image').read_bytes():
         raise ValueError('Trial kernel forces userdata boot; rebuild without e5.openwrt= for TF')
@@ -112,7 +113,8 @@ def main():
         'apk --root /target --no-scripts add ttyd luci-app-ttyd luci-i18n-ttyd-zh-cn luci-i18n-ttyd-tr iw-full && '
         'sh /target/usr/libexec/e5-ttyd-bind /target && '
         'ln -sf ../init.d/ttyd /target/etc/rc.d/S99ttyd && '
-        'ln -sf ../init.d/ttyd /target/etc/rc.d/K50ttyd')
+        'ln -sf ../init.d/ttyd /target/etc/rc.d/K50ttyd && '
+        'ucode /target/usr/libexec/unisoc-modem/disable-stock-upgrade /target')
     runpy.run_path(str(TOP / 'devices/t551m/network-startup.py'))['patch_root'](root, a.profile)
     # The SMS forward signs DingTalk webhooks with the openssl CLI and sends SMTP
     # through msmtp; the clean base carries the backend files without the packages.
@@ -233,7 +235,7 @@ def main():
         target.write_bytes((TOP / src).read_bytes().replace(b'\r\n', b'\n'))
         target.chmod(0o755)
     tools = package / 'scripts/tools'
-    tools.mkdir(parents=True)
+    tools.mkdir(parents=True, exist_ok=True)
     for n in ('e5-telnet.py', 'e5-update.py', 'sprd-bt-config.py'):
         shutil.copy2(TOP / 'tools' / n, tools / n)
     shutil.copytree(TOP / 'tools/vbc-profile', tools / 'vbc-profile', ignore=shutil.ignore_patterns('__pycache__'))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run real boot helpers against files in a disposable directory, never misc."""
 from pathlib import Path
-import json,os,subprocess,tempfile,unittest
+import json,os,subprocess,tempfile,unittest,struct,zlib
 
 TOP=Path(__file__).resolve().parents[2]
 MU=Path(os.environ.get('MU300_REPO',str(TOP.parent/'mu300-linux-clean-tf-7.2')))
@@ -12,9 +12,14 @@ class BootDefault(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);conf=root/'etc';runtime=root/'run';runtime.mkdir();conf.mkdir()
             (conf/'default-boot').write_text('android\n')
-            misc=root/'misc';misc.write_bytes(b'A'*4096)
-            for name in ['misc-bc-slot-a.bin','misc-bc-slot-b-trial.bin','misc-bc-android.bin','misc-bc-linux-trial.bin']:
-                (runtime/name).write_bytes(b'B'*(31 if bad_block else 32))
+            android=bytearray(32);android[:10]=b'_a\0\0BCAB\x01\x02';android[12]=0x9f;android[14]=0x1e
+            struct.pack_into('<I',android,28,zlib.crc32(android[:28]))
+            linux=bytearray(android);linux[:4]=b'_b\0\0';linux[12]=0x9e;linux[14]=0x2f
+            struct.pack_into('<I',linux,28,zlib.crc32(linux[:28]))
+            misc=root/'misc';misc.write_bytes(b'A'*2048+android+b'A'*2016)
+            for name,content in [('misc-bc-slot-a.bin',android),('misc-bc-slot-b-trial.bin',linux),
+                                 ('misc-bc-android.bin',android),('misc-bc-linux-trial.bin',linux)]:
+                (runtime/name).write_bytes(content[:-1] if bad_block else content)
             (runtime/'misc-dev').write_text(str(misc)+'\n');(runtime/'linux-slot').write_text('b\n')
             cmdline=root/'cmdline';cmdline.write_text('test\n')
             script=original.read_text().replace('/etc/e5linux',str(conf)).replace('/etc/mu300',str(conf))

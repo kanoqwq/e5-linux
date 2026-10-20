@@ -12,9 +12,14 @@ T551M OpenWrt bring-up has a separate [device profile](devices/t551m/README.md),
 including its charger, GPIO backlight, 32-bit vendor runtime and isolated NV storage.
 Use that profile's build and trial procedure for T551M.
 
+angelcare K1 has a separate [bring-up profile](devices/k1/README.md), sharing
+the M8 UMS9620 platform with K1's own panel and battery policy. Hardware boot
+and peripheral validation are pending; this profile is not a release image.
+
 Debian 13/Phosh and OpenWrt 25.12.5 on the Rongyue E5 5G handset/hotspot
-(`ums9158_1h10`, Unisoc UMS9621, Android 13). Linux uses `boot_b`; Android
-stays on slot A. SD multiboot is the recommended installation layout. The
+(`ums9158_1h10`, Unisoc UMS9621, Android 13). The installer detects and protects
+the current Android slot and uses the other boot slot for Linux.
+SD multiboot is the recommended installation layout. The
 installer checks available space and allocates only SD partitions; Android's
 eMMC partition table stays intact. Existing userdata loop-image installations
 remain supported.

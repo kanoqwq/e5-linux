@@ -16,8 +16,8 @@ def parse_address(value):
 
 
 def prepare(root=Path('/')):
-    if (root / 'etc/e5/device-profile').read_text().strip() != 'm8':
-        raise ValueError('M8 profile required')
+    if (root / 'etc/e5/device-profile').read_text().strip() not in ('m8', 'k1'):
+        raise ValueError('M8-family profile required')
     path = root / 'lib/firmware/sprd/marlin3lite_pskey.bin'
     data = bytearray(path.read_bytes())
     if len(data) != 176:

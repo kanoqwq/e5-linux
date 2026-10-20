@@ -243,6 +243,16 @@ class LocksTest(unittest.TestCase):
         with patch.object(locks, 'value', return_value='get nr synch_param,42,2'):
             with self.assertRaisesRegex(RuntimeError, 'VoNR'): locks.read_voice('vonr')
 
+    def test_manual_cell_channel_boundaries(self):
+        for value in ('lte:0,0', 'lte:262143,503', 'nr:1,0', 'nr:3279165,1007'):
+            locks.apply('cell', value)
+            self.assertIn(value, locks.snapshot()['cells'])
+        before = list(self.sent)
+        for value in ('lte:262144,0', 'nr:3279166,0', 'lte:1,-1', 'nr:1,1008', 'lte:1e3,1'):
+            with self.assertRaises(ValueError):
+                locks.apply('cell', value)
+        self.assertEqual(self.sent, before)
+
     def test_cell_add_and_unlock_verified(self):
         locks.apply('cell','lte:3740,36')
         self.assertEqual(locks.snapshot()['cells'],['lte:3740,36'])

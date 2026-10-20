@@ -39,7 +39,7 @@ class Package(unittest.TestCase):
 
     def fixture(self, root, profile):
         source = root / 'source'; source.mkdir()
-        for name in ('flash.py', 'part-two-stage.py', 'userdata-image.sh', 'android-loop.sh', 'README.md', 'README.zh-CN.md', 'START-HERE.md'):
+        for name in ('flash.py', 'boot-slots.py', 'part-two-stage.py', 'userdata-image.sh', 'android-loop.sh', 'README.md', 'README.zh-CN.md', 'START-HERE.md'):
             shutil.copyfile(BUNDLE / name, source / name)
         package = root / 'package with spaces'
         entries['assemble'](package, source)

@@ -1,5 +1,8 @@
 # 自动打包与发布
 
+本地多机型构建与目录规范见 [LOCAL-BUILD.zh-CN.md](LOCAL-BUILD.zh-CN.md)。
+本页主要说明独立 GitHub Actions runner 的发布流程。
+
 `.github/workflows/release.yml` 构建主线内核 OpenWrt 一键刷入包，并在校验通过后发布
 GitHub Release。支持两种入口：
 

@@ -1,0 +1,168 @@
+--- a/drivers/power/supply/charger-manager.c
++++ b/drivers/power/supply/charger-manager.c
+@@ -1411,102 +1411,53 @@
+  */
+ static bool is_full_charged(struct charger_manager *cm)
+ {
++	/* P720S11 hardware termination endpoint (SGM41513, stock SQC STATUS).
++	 * This board's CM consumes the charger's real termination status. Do not
++	 * infer full from UI capacity or retain the donor's 120 mA criterion:
++	 * SGM can terminate above it. Keep the stock CM voltage gate and FGU
++	 * full-endpoint adjustment, with ordinary UI smoothing left unchanged.
++	 */
+ 	struct charger_desc *desc = cm->desc;
+-	union power_supply_propval val;
+-	struct power_supply *fuel_gauge;
+-	bool is_full = false;
+-	int ret = 0;
+-	int uV, uA;
+-
+-	/* If there is no battery, it cannot be charged */
+-	if (!is_batt_present(cm))
+-		return false;
+-
+-	fuel_gauge = power_supply_get_by_name(cm->desc->psy_fuel_gauge);
+-	if (!fuel_gauge)
+-		return false;
+-
+-	if (desc->fullbatt_full_capacity > 0) {
+-		val.intval = 0;
+-
+-		/* Not full if capacity of fuel gauge isn't full */
+-		ret = power_supply_get_property(fuel_gauge,
+-						POWER_SUPPLY_PROP_CHARGE_FULL, &val);
+-		if (!ret && val.intval > desc->fullbatt_full_capacity) {
+-			is_full = true;
+-			goto out;
+-		}
+-	}
+-
+-	/* Full, if it's over the fullbatt voltage */
+-	if (desc->fullbatt_uV > 0 && desc->fullbatt_uA > 0) {
+-		ret = get_vbat_now_uV(cm, &uV);
++	union power_supply_propval val = { 0 };
++	struct power_supply *charger;
++	int ret, uV, i;
++	bool done = false;
++
++	if (!is_batt_present(cm) || !is_ext_pwr_online(cm) ||
++	    !cm->charger_enabled || cm->emergency_stop)
++		goto not_full;
++
++	for (i = 0; desc->psy_charger_stat[i]; i++) {
++		charger = power_supply_get_by_name(desc->psy_charger_stat[i]);
++		if (!charger)
++			continue;
++		ret = power_supply_get_property(charger, POWER_SUPPLY_PROP_STATUS, &val);
++		power_supply_put(charger);
+ 		if (ret)
+-			goto out;
+-
+-		ret = get_ibat_now_uA(cm, &uA);
++			continue;
++		if (val.intval == POWER_SUPPLY_STATUS_FULL) {
++			done = true;
++			break;
++		}
++	}
++	if (!done || desc->fullbatt_uV <= 0)
++		goto not_full;
++	ret = get_vbat_now_uV(cm, &uV);
++	if (ret || uV < desc->fullbatt_uV)
++		goto not_full;
++
++	if (!desc->force_set_full || cm->battery_status != POWER_SUPPLY_STATUS_FULL) {
++		ret = adjust_fuel_cap(cm, CM_FORCE_SET_FUEL_CAP_FULL);
+ 		if (ret)
+-			goto out;
+-
+-		/* Battery is already full, checks voltage drop. */
+-		if (cm->battery_status == POWER_SUPPLY_STATUS_FULL && desc->fullbatt_vchkdrop_uV) {
+-			int batt_ocv;
+-
+-			ret = get_batt_ocv(cm, &batt_ocv);
+-			if (ret || batt_ocv < 0)
+-				goto out;
+-
+-			if ((u32)batt_ocv > (cm->desc->fullbatt_uV - cm->desc->fullbatt_vchkdrop_uV))
+-				is_full = true;
+-			else
+-				desc->force_set_full = false;
+-			goto out;
+-		}
+-
+-		if (desc->first_fullbatt_uA > 0 && uV >= desc->fullbatt_uV &&
+-		    uA > desc->fullbatt_uA && uA <= desc->first_fullbatt_uA && uA >= 0) {
+-			if (++desc->first_trigger_cnt > 1)
+-				cm->desc->force_set_full = true;
+-		} else {
+-			desc->first_trigger_cnt = 0;
+-		}
+-
+-		if (uV >= desc->fullbatt_uV && uA <= desc->fullbatt_uA && uA >= 0) {
+-			if (++desc->trigger_cnt > 1) {
+-				if (cm->desc->cap >= CM_CAP_FULL_PERCENT) {
+-					if (desc->trigger_cnt == 2)
+-						adjust_fuel_cap(cm, CM_FORCE_SET_FUEL_CAP_FULL);
+-					is_full = true;
+-				} else {
+-					is_full = false;
+-					adjust_fuel_cap(cm, CM_FORCE_SET_FUEL_CAP_FULL);
+-				}
+-				cm->desc->force_set_full = true;
+-			} else {
+-				is_full = false;
+-			}
+-			goto out;
+-		} else {
+-			is_full = false;
+-			desc->trigger_cnt = 0;
+-			goto out;
+-		}
+-	}
+-
+-	/* Full, if the capacity is more than fullbatt_soc */
+-	if (desc->fullbatt_soc > 0) {
+-		val.intval = 0;
+-
+-		ret = power_supply_get_property(fuel_gauge, POWER_SUPPLY_PROP_CAPACITY, &val);
+-		if (!ret && val.intval >= desc->fullbatt_soc) {
+-			is_full = true;
+-			goto out;
+-		}
+-	}
+-
+-out:
+-	power_supply_put(fuel_gauge);
+-	return is_full;
++			goto not_full;
++		desc->force_set_full = true;
++		dev_info(cm->dev, "P720S11 hardware full endpoint: vbat=%d uV\n", uV);
++	}
++	return true;
++
++not_full:
++	desc->force_set_full = false;
++	return false;
+ }
+ 
+ /**
+@@ -8158,17 +8109,7 @@
+ 		if (cm->desc->cap >= 985 && cm->desc->cap <= 994 &&
+ 		    fuel_cap >= CM_CAP_FULL_PERCENT)
+ 			fuel_cap = 994;
+-		/*
+-		 * Record 99% of the charging time.
+-		 * if it is greater than 1500s,
+-		 * it will be mandatory to display 100%,
+-		 * but the background is still charging.
+-		 */
+-		if (cm->desc->cap >= 985 &&
+-		    cm->desc->trickle_time >= cm->desc->trickle_time_out &&
+-		    cm->desc->trickle_time_out > 0 &&
+-		    batt_uA > 0)
+-			cm->desc->force_set_full = true;
++		/* Full is established only by the SGM termination endpoint. */
+ 
+ 		break;
+ 

@@ -1,0 +1,15 @@
+{
+  "profile": "k1",
+  "android_models": ["angelcare K1"],
+  "android_device": "ums9157_2h10",
+  "platform": "ums9620",
+  "family": "m8",
+  "hostname": "Angelcare-K1",
+  "panel": "lcd_ili9488_ruiheng_mipi_hvga",
+  "audio_receiver_wiring": "aol",
+  "battery_capacity_uah": 3100000,
+  "battery_max_voltage_uv": 4380000,
+  "stock_build": "AngelCare.K1.YUAN.YD.T1.0",
+  "stock_modem_control_sha256": "43a3bc8c4730b87431d4fc8d90a3652b2458ef8bc9f59772685d4016cc7819a3",
+  "stock_charger_sha256": "d28c676b033b58b6fab277aa44d8e4273c3dc24d227423b432d52e7a43360119"
+}

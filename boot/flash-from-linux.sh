@@ -1,12 +1,11 @@
 #!/bin/sh
-# Flash an e5-linux boot image into slot b from the running e5-linux system,
+# Flash an e5-linux boot image into its identified Linux slot from the running system,
 # over the USB management LAN.  No Android round trip.
 #
-# boot/flash-trial.sh needs the device to be on slot a with adb+su, so every
+# Android-side flashing needs adb+su in the current Android slot, so every
 # test costs an arm-Android / reboot / wait-for-Android / flash / reboot cycle.
-# Linux is already root and boot_b is just another block device there: the
-# running system lives in a file on userdata, so overwriting boot_b under it is
-# harmless, and slot a is never touched either way.  A half-written image is
+# Linux is already root; its boot partition is separate from the running root.
+# The current Android boot is never written. A half-written Linux image is
 # safe too -- LK finds no valid boot image, burns the two tries and falls back
 # to Android.
 #
@@ -19,7 +18,7 @@
 # inside that and reserves the rest of the partition for boot/init's persistent
 # log, which is what the .json's sha256_head56m covers.
 #
-# usage: boot/flash-from-linux.sh work/boot-linux-slotb-foo.img
+# usage: boot/flash-from-linux.sh work/boot-linux-foo.img
 set -eu
 IMG=$1
 BASE=${IMG%.img}
@@ -47,13 +46,16 @@ say "checking the device is running e5-linux"
 dev 'echo E5-MARK-$(cat /etc/hostname)' | grep -q 'E5-MARK-e5-linux' || {
     echo "no e5-linux on $HOST (telnet)" >&2; exit 1; }
 
-# boot/init records misc and userdata in /run/e5linux but not boot_b, so resolve
-# it the same way init does: by PARTNAME out of sysfs.
-say "locating boot_b"
-BOOTB=$(dev 'for u in /sys/class/block/mmcblk*p*/uevent; do grep -qx PARTNAME=boot_b "$u" && echo /dev/$(basename $(dirname "$u")); done' \
+# Historical BC filenames describe roles. Require the new image to agree
+# with the running Linux role before writing either physical partition.
+LINUX_SLOT=$(dev 'dd if=/run/e5linux/misc-bc-slot-b-trial.bin bs=1 count=2 2>/dev/null' | grep -oE '^_[ab]$' | cut -c2)
+case "$LINUX_SLOT" in a|b) ;; *) echo 'Linux slot unavailable; nothing written' >&2; exit 1 ;; esac
+[ "$(jget linux_slot)" = "$LINUX_SLOT" ] || { echo 'Boot image slot differs from this installation; nothing written' >&2; exit 1; }
+say "locating boot_$LINUX_SLOT"
+BOOTB=$(dev "for u in /sys/class/block/mmcblk*p*/uevent; do grep -qx PARTNAME=boot_$LINUX_SLOT \"\$u\" && echo /dev/\$(basename \$(dirname \"\$u\")); done" \
         | grep -o '/dev/mmcblk[0-9]*p[0-9]*' | head -1)
-[ -n "$BOOTB" ] || { echo "boot_b not found on the device" >&2; exit 1; }
-echo "   boot_b = $BOOTB"
+[ -n "$BOOTB" ] || { echo "Linux boot not found on the device" >&2; exit 1; }
+echo "   boot_$LINUX_SLOT = $BOOTB"
 
 # The host address on the LAN is whatever the device's DHCP server handed out,
 # so ask the interface rather than hard-coding it: 192.168.9.x from br0, or
@@ -78,16 +80,16 @@ say "verifying the partition"
 GOT=$(dev "dd if=$BOOTB bs=1M count=$HEAD_MB 2>/dev/null | sha256sum | cut -d' ' -f1" \
       | grep -oE '^[0-9a-f]{64}' | head -1)
 [ "$GOT" = "$EXP_HEAD" ] || {
-    echo "boot_b verify failed" >&2
+    echo "Linux boot verify failed" >&2
     echo "  got      ${GOT:-<nothing>}" >&2
     echo "  expected $EXP_HEAD" >&2
-    echo "slot a is untouched; the device still falls back to Android" >&2
+    echo "Android slot is untouched" >&2
     exit 1; }
 echo "   head56m ok"
 
 # Only now is it safe to point the bootloader at slot b.  init copied both
 # bootloader_control blocks into /run/e5linux at boot.
-say "arming slot b"
+say "arming Linux slot $LINUX_SLOT"
 dev 'dd if=/run/e5linux/misc-bc-slot-b-trial.bin of=$(cat /run/e5linux/misc-dev) bs=1 seek=2048 conv=notrunc 2>&1 | tail -1; sync' >/dev/null
 
 say "rebooting into the new image"

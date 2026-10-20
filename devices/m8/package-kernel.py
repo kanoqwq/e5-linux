@@ -6,17 +6,39 @@ from pathlib import Path
 import shutil
 import subprocess
 import tarfile
+import tempfile
 
 TOP = Path(__file__).resolve().parents[2]
 
 
-def package(build, out):
+def check_output_names(out, names):
+    folded = {}
+    collisions = []
+    for name in names:
+        prior = folded.setdefault(name.casefold(), name)
+        if prior != name:
+            collisions.append(prior + '/' + name)
+    if not collisions:
+        return
+    out.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.module-case-', dir=out) as directory:
+        probe = Path(directory) / 'CaseSensitive'
+        probe.write_bytes(b'')
+        if (probe.parent / 'casesensitive').exists():
+            raise ValueError('Kernel modules require a case-sensitive output filesystem: ' +
+                             ', '.join(collisions) + '; use a Linux-native output directory')
+
+
+def package(build, out, *, profile='m8'):
+    if profile not in ('m8', 'k1'):
+        raise ValueError('Unsupported UMS9620 kernel profile')
     release = (build / 'include/config/kernel.release').read_text().strip()
-    if '-m8-' not in release:
-        raise ValueError('Not an M8 kernel build')
+    if '-' + profile + '-' not in release:
+        raise ValueError('Wrong kernel profile: ' + release)
     files = [str(Path(name).with_suffix('.ko')) for name in (build / 'modules.order').read_text().splitlines()]
     if len({Path(p).name for p in files}) != len(files):
         raise ValueError('Duplicate module names cannot be flattened')
+    check_output_names(out, [Path(p).name for p in files])
     modules = out / 'modules'
     modules.mkdir(parents=True, exist_ok=True)
     expected = {Path(p).name for p in files}

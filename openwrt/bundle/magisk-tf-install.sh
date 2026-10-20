@@ -19,12 +19,22 @@ preflight() {
     . "$P/files/tf-install.env"
     [ "$(id -u)" = 0 ] || fail 'root required'
     [ "$(getprop ro.product.model)" = "$ANDROID_MODEL" ] || fail 'wrong device model for this package'
-    [ "$(getprop ro.boot.slot_suffix)" = _a ] || fail 'Android A / OpenWrt B only'
+    case "$(getprop ro.boot.slot_suffix)" in
+        _a) ANDROID_SLOT=a; LINUX_SLOT=b ;; _b) ANDROID_SLOT=b; LINUX_SLOT=a ;;
+        *) fail 'Android slot unavailable' ;;
+    esac
+    [ "$ANDROID_SLOT" != b ] || [ "${SLOT_ROLES_VERSION:-0}" -ge 1 ] || fail 'package initramfs lacks dynamic-slot support'
     # T512N/PB8 engineering firmware accepts a replacement boot while reporting
     # green/locked. Keep all existing models' preflight behavior unchanged.
-    if [ "${PROFILE:-}" != t512n ]; then
-        [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'bootloader must be unlocked'
-    fi
+    case "${PROFILE:-}" in
+        t512n) ;;
+        yuanhang41s) [ "$(getprop ro.product.device)" = P720S11 ] || fail 'unknown 41S board' ;;
+        k1)
+            [ "$(getprop ro.product.device)" = ums9157_2h10 ] || fail 'unknown K1 board'
+            [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'bootloader must be unlocked'
+            ;;
+        *) [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'bootloader must be unlocked' ;;
+    esac
     [ -s "$P/files/ext4-tools.tar" ] || fail 'missing bundled ext4 tools'
     tar -tf "$P/files/ext4-tools.tar" > "$STATE/ext4-tools.list"
     for tool in lib/ld-musl-aarch64.so.1 usr/sbin/e2fsck usr/sbin/resize2fs ext4-geometry.sh SHA256SUMS; do
@@ -34,9 +44,10 @@ preflight() {
     for selector in boot-os boot-os-next openwrt-default-boot; do
         [ ! -L "/data/e5linux/$selector" ] || fail 'unsafe boot selector'
     done
-    [ -b /dev/block/by-name/boot_b ] && [ -b /dev/block/by-name/misc ] || fail 'missing boot partitions'
-    [ "$(blockdev --getsize64 /dev/block/by-name/boot_b)" = "$BOOT_BYTES" ] || fail 'boot partition size mismatch'
-    "$P/files/e5-bootctl" check
+    BOOT=/dev/block/by-name/boot_$LINUX_SLOT
+    [ -b "$BOOT" ] && [ -b /dev/block/by-name/misc ] || fail 'missing boot partitions'
+    [ "$(blockdev --getsize64 "$BOOT")" = "$BOOT_BYTES" ] || fail 'boot partition size mismatch'
+    "$P/files/e5-bootctl" check "$ANDROID_SLOT"
     sh "$P/files/android-bootchain.sh" check
     command -v mount >/dev/null
     emmc=$(readlink -f /dev/block/by-name/misc); emmc=${emmc##*/}; emmc=${emmc%p*}
@@ -72,9 +83,18 @@ prepare_firmware() {
     [ -x "$view/usr/bin/python3" ] || fail 'rootfs Python is required for local firmware conversion'
     mkdir -p "$view/tmp/e5-convert/raw" "$view/tmp/e5-convert/tools"
     raw=$view/tmp/e5-convert/raw
-    for name in wcnmodem.bin bt_configure_pskey.xpe.ini bt_configure_rf.xpe.ini; do
+    bt_files='bt_configure_pskey.xpe.ini bt_configure_rf.xpe.ini'
+    [ "$PROFILE" != yuanhang41s ] || bt_files='bt_configure_pskey.ini bt_configure_rf.ini'
+    for name in wcnmodem.bin $bt_files; do
         cp "/odm/firmware/$name" "$raw/$name"
     done
+    if [ "$PROFILE" = yuanhang41s ]; then
+        for name in aw883xx_acf.bin awinic_params.bin sitronix_firmware_huaying.dump; do
+            cp "/vendor/firmware/$name" "$raw/"
+        done
+        cp /odm/etc/audio_route.xml "$raw/"
+        cp /odm/etc/audio_params/sprd/audio_pga.xml "$raw/"
+    fi
     cp /mnt/vendor/btmac.txt "$raw/"
     cp /odm/firmware/wifi_board_config*.ini "$raw/"
     for name in audio_structure.xml dsp_vbc.xml cvs.xml; do
@@ -83,18 +103,28 @@ prepare_firmware() {
     for entry in /odm/firmware/gnssmodem.bin /vendor/firmware/aw87xxx_acf.bin /vendor/firmware/tsx_data /odm/etc/audio_params/sprd/codec.xml; do
         [ ! -f "$entry" ] || cp -L "$entry" "$raw/"
     done
-    dd if=/dev/block/by-name/l_agdsp_a of="$raw/l_agdsp_a.img" bs=1048576 count=6
+    dd if=/dev/block/by-name/l_agdsp_$ANDROID_SLOT of="$raw/l_agdsp_a.img" bs=1048576 count=6
     for entry in /data/misc/apexdata/com.android.wifi/WifiConfigStoreSoftAp.xml /data/misc/wifi/WifiConfigStoreSoftAp.xml; do
         if [ -s "$entry" ]; then cp "$entry" "$raw/android-hotspot.xml"; break; fi
     done
     cp "$P/scripts/tools/sprd-bt-config.py" "$view/tmp/e5-convert/tools/"
     cp -R "$P/scripts/tools/vbc-profile" "$view/tmp/e5-convert/tools/"
+    cp "$P/scripts/tools/yuanhang41s-audio-routes.py" "$view/tmp/e5-convert/tools/"
+    cp "$P/scripts/tools/yuanhang41s-HiFi.base.conf" "$view/tmp/e5-convert/tools/"
     cp "$P/files/magisk-firmware.py" "$view/tmp/e5-convert/convert.py"
-    chroot "$view" /usr/bin/python3 /tmp/e5-convert/convert.py /tmp/e5-convert/raw /tmp/e5-convert/firmware /tmp/e5-convert/tools "$DEFAULT_SSID"
+    chroot "$view" /usr/bin/python3 /tmp/e5-convert/convert.py /tmp/e5-convert/raw /tmp/e5-convert/firmware /tmp/e5-convert/tools "$DEFAULT_SSID" "$PROFILE"
+    cp "$P/scripts/installer/boot-slots.py" "$view/tmp/e5-convert/boot-slots.py"
+    cp "$P/files/boot.img" "$view/tmp/e5-convert/boot.img"
+    cp "$P/files/boot.json" "$view/tmp/e5-convert/boot.json"
+    dd if=/dev/block/by-name/misc of="$view/tmp/e5-convert/control.bin" bs=1 skip=2048 count=32
+    chroot "$view" /usr/bin/python3 /tmp/e5-convert/boot-slots.py /tmp/e5-convert/boot.img /tmp/e5-convert/boot.json /tmp/e5-convert/control.bin "$ANDROID_SLOT" /tmp/e5-convert/boot-bound.img /tmp/e5-convert/firmware
+    cp "$view/tmp/e5-convert/boot-bound.img" "$STATE/boot-bound.img"
+    [ "$(stat -c %s "$STATE/boot-bound.img")" = "$BOOT_BYTES" ] || fail 'bound boot size mismatch'
+    BOOT_SHA256=$(sha "$STATE/boot-bound.img")
     cp "$view/tmp/e5-convert/firmware/install.conf" "$STATE/install.conf"
     . "$STATE/install.conf"
     echo "[TF] Hotspot / 热点：$E5_WIFI_SSID; key / 密码：$E5_WIFI_KEY"
-    (cd "$view/tmp/e5-convert/firmware" && tar -cf "$STATE/firmware.tar" lib)
+    (cd "$view/tmp/e5-convert/firmware" && tar -cf "$STATE/firmware.tar" lib etc)
     umount "$view"
     VIEW_MOUNTED=0
     losetup -d "$LOOP"
@@ -103,11 +133,11 @@ prepare_firmware() {
     rm "$STATE/convert.ext4"
     E5_COLLECT_WORK="$STATE/collect" sh "$P/files/collect-device-files.sh" "$STATE/device-files.tar" "$STATE/firmware.tar"
     [ -s "$STATE/device-files.tar" ] || fail 'device firmware was not collected'
-    # Preserve the old Linux/Android B boot before any destructive TF operation.
-    dd if=/dev/block/by-name/boot_b of="$STATE/boot_b.before.img" bs=1048576
-    [ "$(stat -c %s "$STATE/boot_b.before.img")" = "$BOOT_BYTES" ] || fail 'incomplete boot backup'
-    saved_boot=$(sha "$STATE/boot_b.before.img")
-    live_boot=$(sha /dev/block/by-name/boot_b)
+    # Preserve the opposite slot's old boot before any destructive TF operation.
+    dd if="$BOOT" of="$STATE/boot_$LINUX_SLOT.before.img" bs=1048576
+    [ "$(stat -c %s "$STATE/boot_$LINUX_SLOT.before.img")" = "$BOOT_BYTES" ] || fail 'incomplete boot backup'
+    saved_boot=$(sha "$STATE/boot_$LINUX_SLOT.before.img")
+    live_boot=$(sha "$BOOT")
     [ "$saved_boot" = "$live_boot" ] || fail 'boot backup readback mismatch'
 }
 release_card() {
@@ -178,11 +208,11 @@ write_root() {
     VIEW_MOUNTED=0
 }
 write_boot() {
-    # Current Android A and NV are never written. Misc is committed only after
+    # Current Android and NV are never written. Misc is committed only after
     # root + firmware + complete boot readback validation.
-    dd if="$P/files/boot.img" of=/dev/block/by-name/boot_b bs=1048576 conv=fsync
-    blockdev --flushbufs /dev/block/by-name/boot_b
-    [ "$(sha /dev/block/by-name/boot_b)" = "$BOOT_SHA256" ] || fail 'boot_b verification failed; do not boot Linux'
+    dd if="$STATE/boot-bound.img" of="$BOOT" bs=1048576 conv=fsync
+    blockdev --flushbufs "$BOOT"
+    [ "$(sha "$BOOT")" = "$BOOT_SHA256" ] || fail 'Linux boot verification failed; do not boot Linux'
 }
 arm_linux() {
     mkdir -p /data/e5linux
@@ -194,14 +224,14 @@ arm_linux() {
     rm -f /data/e5linux/boot-os-next
     echo linux > /data/e5linux/openwrt-default-boot
     sync
-    "$P/files/e5-bootctl" arm "$STATE/boot-control.before.bin"
+    "$P/files/e5-bootctl" arm "$STATE/boot-control.before.bin" "$ANDROID_SLOT"
 }
 install_tf() {
     stage 'Package, model, boot chain and capacity checks / 预检' preflight
     stage 'Prepare and convert this device firmware / 提取并转换本机固件' prepare_firmware
     stage 'Release TF card / 释放 TF 卡' release_card
     stage 'Install and reopen root read-only / 写系统并只读复验' write_root
-    stage 'Write and verify boot_b / 写入并校验内核' write_boot
+    stage 'Write and verify Linux boot / 写入并校验内核' write_boot
     stage 'Select OpenWrt / 设置启动目标' arm_linux
     echo complete > "$STATE/stage"
     echo 'E5-TF-INSTALL-OK: reboot manually / 请手动重启'

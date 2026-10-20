@@ -39,7 +39,7 @@ class Transaction(unittest.TestCase):
         self.stub('blockdev', 'case $1 in --getsize64) wc -c < "$2" ;; --flushbufs) : ;; *) exit 2 ;; esac')
         self.stub('sync', ':')
         self.stub('dd', f'exec {shutil.which("dd")} "$@"')
-        for name in ('boot_a', 'boot_b', 'l_agdsp_a', 'nr_fixnv1', 'nr_runtimenv1', 'userdata'):
+        for name in ('boot_a', 'boot_b', 'l_agdsp_a', 'l_agdsp_b', 'nr_fixnv1', 'nr_runtimenv1', 'userdata'):
             (self.by / name).write_bytes(os.urandom(128))
         for part in PARTS:
             for slot in 'ab':
@@ -128,8 +128,23 @@ class Transaction(unittest.TestCase):
         self.misc(a=0x1f)
         self.refused()
 
-    def test_android_b_refused(self):
+    def test_android_b_check_uses_opposite_chain_without_writes(self):
         self.props.write_text('ro.boot.slot_suffix=_b\nro.boot.verifiedbootstate=orange\n')
+        block=bytearray((self.by/'misc').read_bytes())
+        block[2048:2050]=b'_b';block[2060],block[2062]=0x1e,0x9f
+        struct.pack_into('<I',block,2076,zlib.crc32(block[2048:2076]))
+        (self.by/'misc').write_bytes(block);before=self.snapshot()
+        for shell in SHELLS:
+            result=self.run_script('check',shell)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('BOOTCHAIN-PLAN b a',result.stdout)
+            self.assertEqual(self.snapshot(),before)
+
+    def test_41s_tested_green_firmware_requires_exact_board(self):
+        self.props.write_text('ro.product.model=ZTE 7546N\nro.product.device=P720S11\nro.boot.slot_suffix=_a\nro.boot.verifiedbootstate=green\n')
+        self.assertEqual(self.run_script('check').returncode,0)
+        self.assertEqual(self.snapshot(),self.original)
+        self.props.write_text(self.props.read_text().replace('P720S11','other'))
         self.refused()
 
     def test_locked_bootloader(self):

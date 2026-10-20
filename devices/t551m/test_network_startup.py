@@ -58,6 +58,17 @@ class Startup(unittest.TestCase):
         self.assertIn("o.value('keep'", (self.root / 'www/luci-static/resources/protocol/modemmanager.js').read_text())
         subprocess.run(['busybox', 'sh', '-n', str(self.root / 'etc/init.d/e5-sipc-wwan')], check=True)
 
+    def test_every_profile_stages_one_identical_event_recovery(self):
+        expected = (HERE.parents[1] / 'openwrt/overlay/usr/libexec/e5-network-recovery').read_bytes().replace(b'\r\n', b'\n')
+        for profile in ('e5', 't551m', 'm8', 't512n', 'yuanhang41s'):
+            with self.subTest(profile=profile):
+                patch_root(self.root, profile)
+                target = self.root/'usr/libexec/e5-network-recovery'
+                self.assertEqual(target.read_bytes(), expected)
+                self.assertTrue(target.stat().st_mode & 0o111)
+                self.assertEqual(os.readlink(self.root/'etc/rc.d/S96e5-network-recovery'),
+                                 '../init.d/e5-network-recovery')
+
     def test_keep_skips_radio_cycle_and_existing_modes_still_apply(self):
         text = (self.root / 'lib/netifd/proto/modemmanager.sh').read_text()
         subprocess.run(['busybox', 'sh', '-n', str(self.root / 'lib/netifd/proto/modemmanager.sh')], check=True)
