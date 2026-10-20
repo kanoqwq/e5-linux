@@ -208,6 +208,7 @@ class VoiceHardware:
     # Logical "phone" selection may share the speaker on single-transducer
     # hardware. Keep UI intent separate from codec wiring and calibration.
     receiver_output = 'receiver'
+    receiver_wiring = 'hpl'
     receiver_volume_ceiling = 15
     # Shared voice routes from this device's Android parameters.
     ROUTES = {
@@ -234,6 +235,16 @@ class VoiceHardware:
         'EAR_AOL Mixer DACAOL Switch': 'off',
         'DAHP OS D': '5', 'EAR_HPL Mixer DACHPL Switch': 'on',
         'HPL EAR Sel': 'EAR', 'VBC_MIXER1_DAC0': 'HALF_ADD',
+        'Earpiece Function': 'on',
+    }
+    # Some stock boards connect their receiver to AO, not EAR_HPL. Keep the
+    # endpoint (Earpiece Function) distinct from a shared loudspeaker board.
+    RECEIVER_AOL = {
+        'Speaker Function': 'off',
+        'EAR_HPL Mixer DACHPL Switch': 'off', 'HPL EAR Sel': 'HPL',
+        'EAR_AOL Mixer DACAOL Switch': 'off', 'VBC_MIXER1_DAC0': 'NOT_MIX',
+        'AO Mixer AOL Switch': 'on', 'AO Mixer AOR Switch': 'on',
+        'DA AOR Switch': 'on', 'AOL EAR Sel': 'AOL',
         'Earpiece Function': 'on',
     }
     SPEAKER = {
@@ -311,6 +322,7 @@ class VoiceHardware:
             self.volume_curves = self.load_volume_curves(data=profile)
         self.codec_gains = self.load_codec_gains()
         self.receiver_output = self.load_receiver_output()
+        self.receiver_wiring = self.load_receiver_wiring()
         self.receiver_volume_ceiling = self.load_receiver_volume_ceiling()
         self.applied_volume = None
         self.mixer = AlsaControl(self.card)
@@ -332,6 +344,16 @@ class VoiceHardware:
     @property
     def speaker_path(self):
         return not self.bluetooth and (self.speaker or self.receiver_output == 'speaker')
+
+    @staticmethod
+    def load_receiver_wiring(path=Path('/etc/e5/receiver-wiring')):
+        try:
+            value = path.read_text().strip()
+        except FileNotFoundError:
+            return 'hpl'
+        if value not in ('hpl', 'aol'):
+            raise ValueError('unsupported receiver wiring; expected hpl or aol')
+        return value
 
     @staticmethod
     def load_receiver_volume_ceiling(path=Path('/etc/e5/receiver-volume-ceiling')):
@@ -439,14 +461,16 @@ class VoiceHardware:
         # handset DSP profile/volume ceiling for the logical phone mode.
         physical_mode = self.profile_word(self.band, self.speaker_path) >> 24
         gains = self.codec_gains.get(physical_mode, {})
+        ao_path = self.speaker_path or self.receiver_wiring == 'aol'
         self.put('DAC Gain DAC Playback Volume', gains.get(
-            'dacs_playback_volume' if self.speaker_path else 'dacl_playback_volume', 0 if self.speaker_path else 3))
+            'dacs_playback_volume' if ao_path else 'dacl_playback_volume', 0 if ao_path else 3))
         self.put('AO Gain AO Playback Volume', gains.get('ao_playback_volume',
             (3, 3, 3, 4)[self.band] if self.speaker_path else 6))
-        if not self.speaker_path:
+        if not ao_path:
             self.put('EAR Gain EAR Playback Volume', gains.get('ear_playback_volume', (2, 2, 2, 4)[self.band]))
-        logging.info('voice profiles=%#x, bandwidth=%d, output=%s, VBC_VOLUME=%d',
-                     word, self.band, 'speaker' if self.speaker_path else 'receiver', self.dsp_volume())
+        logging.info('voice profiles=%#x, bandwidth=%d, output=%s, wiring=%s, VBC_VOLUME=%d',
+                     word, self.band, 'speaker' if self.speaker_path else 'receiver',
+                     'aol' if ao_path else 'hpl', self.dsp_volume())
 
     def output(self):
         # Disable the old endpoint before rewiring; never feed both outputs.
@@ -455,7 +479,9 @@ class VoiceHardware:
         if self.bluetooth:
             for name, value in self.BLUETOOTH.items(): self.put(name, value)
             return
-        for name, value in (self.SPEAKER if self.speaker_path else self.RECEIVER).items():
+        route = (self.SPEAKER if self.speaker_path else
+                 self.RECEIVER_AOL if self.receiver_wiring == 'aol' else self.RECEIVER)
+        for name, value in route.items():
             self.put(name, value)
 
     def set_speaker(self, enabled):

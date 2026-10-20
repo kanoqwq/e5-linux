@@ -23,6 +23,10 @@ with tempfile.TemporaryDirectory() as directory:
             'etc/e5/sim-radio': '0 1\n', 'etc/e5/release.json': 'old release',
             'etc/e5-infoscreen/plugins/other/user.json': 'other app data',
             phone + 'phone.js': 'old phone', phone + 'manifest.json': 'old manifest',
+            'etc/e5-sounds/notification.wav': 'own ringtone bytes',
+            'etc/e5-cpu-voltage.json': '{"offset":3125}',
+            'etc/bluetooth/main.conf': '[General]\nName=User Bluetooth\n',
+            'etc/unisoc-modem/apn-profiles.json': 'own per-SIM APN profiles',
         }.items():
             put(old, name, text)
         for name in ('image-version', 'image-form', 'build-time', 'release.json'):
@@ -39,6 +43,10 @@ with tempfile.TemporaryDirectory() as directory:
         assert (new / 'etc/config/network').read_text() == 'user network'
         assert (new / 'etc/shadow').read_text() == 'user password'
         assert (new / 'etc/e5-infoscreen/plugins/other/user.json').read_text() == 'other app data'
+        assert (new / 'etc/e5-sounds/notification.wav').read_text() == 'own ringtone bytes'
+        assert (new / 'etc/e5-cpu-voltage.json').read_text() == '{"offset":3125}'
+        assert (new / 'etc/bluetooth/main.conf').read_text() == '[General]\nName=User Bluetooth\n'
+        assert (new / 'etc/unisoc-modem/apn-profiles.json').read_text() == 'own per-SIM APN profiles'
         assert (new / 'etc/e5/image-version').read_text() == 'new image-version'
         assert (new / 'etc/e5/release.json').read_text() == 'new release.json'
         assert not list(base.glob('e5-img.phone.*'))

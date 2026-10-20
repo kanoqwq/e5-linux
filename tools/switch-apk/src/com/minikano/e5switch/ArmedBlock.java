@@ -49,11 +49,18 @@ public final class ArmedBlock {
      * the two slot status bytes and the checksum change.
      */
     public static byte[] armed(byte[] current, char slot) {
+        return armed(current, slot, 'a');
+    }
+
+    public static byte[] armed(byte[] current, char slot, char android) {
         if (current == null || current.length != SIZE) {
             throw new IllegalArgumentException("misc boot control must be " + SIZE + " bytes");
         }
         if (slot != 'a' && slot != 'b') {
             throw new IllegalArgumentException("slot must be a or b");
+        }
+        if (android != 'a' && android != 'b') {
+            throw new IllegalArgumentException("Android slot must be a or b");
         }
         if (current[4] != 'B' || current[5] != 'C' || current[6] != 'A' || current[7] != 'B'
                 || current[8] != 1 || (current[9] & 7) != 2) {
@@ -65,21 +72,22 @@ public final class ArmedBlock {
         if (previous.getValue() != checksum) {
             throw new IllegalArgumentException("启动控制块校验失败，未切换。");
         }
+        int at = 12 + (android - 'a') * 2;
+        int other = 12 + (1 - (android - 'a')) * 2;
+        if ((current[at] & 0x80) == 0 || (current[at] & 15) < 2
+                || (current[13] & 1) != 0 || (current[15] & 1) != 0) {
+            throw new IllegalArgumentException("Android 启动状态异常，未切换。");
+        }
         byte[] block = current.clone();
         block[1] = (byte) slot;
-        if (slot == 'b') {
+        if (slot != android) {
             // a: keep its priority (14/15) and successful bit, one try left
-            block[12] = (byte) ((block[12] & 0xf0) | SLOT_OTHER);
-            block[14] = (byte) SLOT_ACTIVE;
+            block[at] = (byte) ((block[at] & 0xf0) | SLOT_OTHER);
+            block[other] = (byte) SLOT_ACTIVE;
         } else {
             // a: priority 15, one try, successful; b: back to priority 14, unusable
-            block[12] = (byte) 0x9f;
-            block[14] = (byte) 0x1e;
-        }
-        block[13] = 0;
-        block[15] = 0;
-        for (int i = 16; i < 28; i++) {
-            block[i] = 0;
+            block[at] = (byte) 0x9f;
+            block[other] = (byte) 0x1e;
         }
         CRC32 crc = new CRC32();
         crc.update(block, 0, 28);

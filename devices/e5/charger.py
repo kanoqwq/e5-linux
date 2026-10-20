@@ -7,6 +7,7 @@ def apply(kernel, replace_function):
     path = kernel / 'drivers/power/supply/aw32257_charger.c'
     text = path.read_text()
     if 'e5-aw32257-current-v1' in text:
+        apply_state(path, replace_function)
         return
     text = text.replace('struct aw32257_device {',
         'struct aw32257_device {\n\t/* e5-aw32257-current-v1: software budgets; REG01 has no IINLIM. */\n'
@@ -106,3 +107,76 @@ def apply(kernel, replace_function):
             '\t\tdev_info(&psy->dev, "E5 DCP: 3A input policy, 2.48A maximum battery charge; JEITA retained\\n");')
         path.write_text(text)
     (path.parent / 'e5-charge-profile.h').write_bytes((here / 'charge-profile.h').read_bytes())
+    apply_state(kernel / 'drivers/power/supply/aw32257_charger.c', replace_function)
+
+
+def apply_state(path, replace_function):
+    """Keep accepted charge commands and the AW state coherent, as stock does."""
+    text = path.read_text()
+    if 'e5-aw32257-state-v2' in text:
+        return
+    text = replace_function(text, 'aw32257_charger_start_charge', '''
+\tint ret;
+\tif (aw32257_current_code(min(info->requested_charge_ua, info->input_budget_ua),
+\t\tinfo->init_data.resistor_sense) < 0)
+\t\treturn -ERANGE;
+\tret = aw32257_set_charge_current(info, info->requested_charge_ua);
+\tif (ret)
+\t\treturn ret;
+\tret = regmap_update_bits(info->pmic, info->charger_pd,
+\t\tinfo->charger_pd_mask, 0);
+\tif (ret)
+\t\treturn ret;
+\t/* Stock aw322xx_start_charge 0x2474: clear CE, HiZ and boost. */
+\treturn aw32257_i2c_write_mask(info, AW32257_REG_CONTROL, 0, 0x07, 0);''')
+    text = text.replace('static void aw32257_charger_stop_charge(',
+                        'static int aw32257_charger_stop_charge(', 1)
+    text = replace_function(text, 'aw32257_charger_stop_charge', '''
+\tint ret = regmap_update_bits(info->pmic, info->charger_pd,
+\t\tinfo->charger_pd_mask, info->charger_pd_mask);
+\tif (ret)
+\t\treturn ret;
+\treturn aw32257_exec_command(info, AW32257_CHARGER_DISABLE);''')
+    text = replace_function(text, 'aw32257_charger_set_status', '''
+\tint ret;
+\t/* e5-aw32257-state-v2: an explicit command must reach the hardware.
+\t * Boot/firmware may have enabled CE while our cached flag is false.
+\t * Only commit the flag after the complete hardware operation succeeds.
+\t */
+\tret = val ? aw32257_charger_start_charge(info) :
+\t\taw32257_charger_stop_charge(info);
+\tif (!ret)
+\t\tinfo->charging = !!val;
+\treturn ret;''')
+    old = '\taw32257_charger_stop_charge(bq);'
+    if text.count(old) != 1:
+        raise ValueError('Unexpected AW32257 initial stop sequence')
+    text = text.replace(old, '\tret = aw32257_charger_stop_charge(bq);\n'
+                        '\tif (ret)\n\t\tgoto error_3;')
+    # CALIBRATE is the CM enable readback, not the software request cache.
+    old = '\t\tval->intval = bq->charging;\n\t\tbreak;'
+    new = '''\t\tcur = aw32257_i2c_read_mask(bq, AW32257_REG_CONTROL, 0x07, 0);
+\t\tif (cur < 0)
+\t\t\treturn cur;
+\t\tval->intval = !cur;
+\t\tbreak;'''
+    if text.count(old) != 1:
+        raise ValueError('Unexpected AW32257 enable readback')
+    text = text.replace(old, new)
+    # Preserve error returns inside helpers while serializing each property
+    # transaction; the stock property handlers also hold this mutex.
+    for kind, next_name, const in (
+        ('set', 'static int aw32257_power_supply_get_property(', 'const '),
+        ('get', 'static int aw32257_power_supply_init(', ''),
+    ):
+        name = 'aw32257_power_supply_' + kind + '_property'
+        text = text.replace('static int ' + name + '(', 'static int ' + name + '_locked(', 1)
+        at = text.index(next_name)
+        wrapper = ('static int ' + name + '(struct power_supply *psy,\n'
+                   '\t\tenum power_supply_property psp, ' + const + 'union power_supply_propval *val)\n'
+                   '{\n\tstruct aw32257_device *bq = power_supply_get_drvdata(psy);\n'
+                   '\tint ret;\n\tmutex_lock(&bq->lock);\n'
+                   '\tret = ' + name + '_locked(psy, psp, val);\n'
+                   '\tmutex_unlock(&bq->lock);\n\treturn ret;\n}\n\n')
+        text = text[:at] + wrapper + text[at:]
+    path.write_text(text)

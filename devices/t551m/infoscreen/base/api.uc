@@ -41,7 +41,6 @@ import { cursor } from 'uci';
 import * as hotspot from '/usr/libexec/unisoc-modem/hotspot.uc';
 
 const WLAN_DEV = 'wlan0';
-const USB_HOST_MAC = '02:50:00:00:e5:02';   // the gadget's host_addr
 const MODEM_TTL = 10;                        // seconds
 const KEY_LOG = '/tmp/e5-infoscreen-keys.log';
 // e5-linux's OpenWrt: e5-sms-notify keeps the unread messages here
@@ -52,6 +51,14 @@ let bus = null;
 const RUN = '/tmp/run/e5-infoscreen/api';
 
 // state that outlives the request: a JSON file, and its age by its mtime
+function image_version() {
+	try {
+		let version = json(readfile('/etc/unisoc-ota/current.json') ?? 'null')?.version;
+		if (type(version) == 'string' && length(version)) return version;
+	} catch (e) {}
+	return read_trim('/etc/e5/image-version');
+}
+
 function state_get(name, ttl) {
 	let path = `${RUN}/${name}.json`;
 	if (ttl != null) {
@@ -382,6 +389,28 @@ function wifi_status() {
 	};
 }
 
+// Gadget host addresses are chosen by the board/installer, not by this UI.
+// Follow only configured function links; an unlinked previous USB mode must
+// not make a stale DHCP lease look like a connected computer. Cached only for
+// this HTTP request, so the next request sees a replug or protocol change.
+let usbHostMacs = null;
+function usb_host_macs() {
+	if (usbHostMacs != null)
+		return usbHostMacs;
+	usbHostMacs = {};
+	for (let path in glob('/sys/kernel/config/usb_gadget/*/configs/*/*/host_addr')) {
+		// Some configfs versions include a C terminator after the 17-byte MAC.
+		let mac = lc(substr(trim(readfile(path) ?? ''), 0, 17));
+		if (match(mac, /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/))
+			usbHostMacs[mac] = true;
+	}
+	return usbHostMacs;
+}
+
+function is_usb_host(mac) {
+	return exists(usb_host_macs(), lc(mac ?? ''));
+}
+
 function clients() {
 	// the stations, from hostapd: this Wi-Fi driver has no station dump, so
 	// iwinfo's assoclist (nl80211) is always empty
@@ -406,7 +435,7 @@ function clients() {
 		let via = null;
 		if (exists(wifi, mac))
 			via = 'wifi';
-		else if (mac == USB_HOST_MAC && usb_up)
+		else if (is_usb_host(mac) && usb_up)
 			via = 'usb';
 		if (!via || seen[mac])
 			continue;
@@ -496,7 +525,7 @@ function usb_status() {
 	let ip = null;
 	for (let line in split(readfile('/tmp/dhcp.leases') ?? '', '\n')) {
 		let f = split(line, ' ');
-		if (length(f) >= 3 && lc(f[1]) == USB_HOST_MAC)
+		if (length(f) >= 3 && is_usb_host(f[1]))
 			ip = f[2];
 	}
 	let n = '/sys/class/net/usb0/statistics/';
@@ -950,7 +979,7 @@ function advanced() {
 		device: {
 			model: 'Rongyue E5',
 			os: rel.DISTRIB_DESCRIPTION,
-			image: read_trim('/etc/e5/image-version'),
+			image: image_version(),
 			kernel: read_trim('/proc/sys/kernel/osrelease'),
 			disk: disk('/'),    // the Debian image for the directory form, the own image standalone
 			thermal: thermal(),
@@ -1035,7 +1064,7 @@ function make_ctx(ns) {
 		api_version: API_VERSION,
 		notify: n => notice_store(ns, n),
 		clear_notification: id => notice_store(ns, { id, clear: true }),
-		sh, sh_json, read_trim, read_num, payload_ints,
+		sh, sh_json, read_trim, read_num, payload_ints, image_version,
 		at,
 		at_console,
 		ubus: ubus_call,
@@ -1238,7 +1267,7 @@ function devices() {
 	for (let line in split(readfile('/tmp/dhcp.leases') ?? '', '\n')) {
 		let f = split(line, ' ');
 		if (length(f) >= 4)
-			add(f[1], f[2], (f[3] != '*') ? f[3] : null, (lc(f[1]) == USB_HOST_MAC) ? 'usb' : 'wifi');
+			add(f[1], f[2], (f[3] != '*') ? f[3] : null, is_usb_host(f[1]) ? 'usb' : 'wifi');
 	}
 	for (let mac in keys(blocked))
 		add(mac, null, null, null);

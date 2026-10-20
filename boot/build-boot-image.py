@@ -35,7 +35,7 @@ import struct
 import subprocess
 import sys
 import zlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 PAGE = 4096
@@ -95,7 +95,27 @@ def slot_info(prio, tries, successful):
     return (prio & 0xf) | ((tries & 0x7) << 4) | ((successful & 1) << 7)
 
 
-def bootloader_control(misc_head):
+def initramfs_archive(files, directories):
+    directories = set(directories)
+    # The kernel's newc extractor does not create missing parent directories.
+    # In particular, losing etc/e5/linux-slot would send persistent logs to
+    # Android's boot partition when Android occupies slot B.
+    for name in list(files) + list(directories):
+        directories.update(str(p) for p in PurePosixPath(name).parents if str(p) != '.')
+    cpio = bytearray()
+    ino = 1
+    for directory in sorted(directories, key=lambda x: (x.count('/'), x)):
+        cpio += cpio_record(directory, b'', stat.S_IFDIR | 0o755, ino)
+        ino += 1
+    for name, (data, mode) in files.items():
+        cpio += cpio_record(name, data, mode, ino)
+        ino += 1
+    cpio += cpio_record('dev/console', b'', stat.S_IFCHR | 0o600, ino, (5, 1))
+    cpio += cpio_record('TRAILER!!!', b'', 0, ino + 1)
+    return bytes(cpio)
+
+
+def bootloader_control(misc_head, android_slot=None):
     """Return (slot_a_block, slot_b_trial_block) from the live bootloader_control.
 
     Same 32-byte AOSP structure as mu300-linux: slot_suffix[4], magic 'BCAB',
@@ -116,15 +136,27 @@ def bootloader_control(misc_head):
         x[28:32] = struct.pack('<I', zlib.crc32(bytes(x[:28])))
         return bytes(x)
 
-    a_info, b_info = bc[12], bc[14]
-    a_prio = a_info & 0xf
-    # slot a: what the device runs today, restored by init when the Linux trial fails
-    slot_a = with_slots(b'_a\0\0', slot_info(a_prio, 1, 1), b_info)
-    # slot b one-shot trial: a keeps a slightly lower priority and stays marked
-    # successful, b gets the top priority with tries=2. LK decrements to 1 on the
-    # next boot; a Linux boot that never succeeds therefore rolls back to a.
-    slot_b = with_slots(b'_b\0\0', slot_info((a_prio - 1) & 0xf, 1, 1), slot_info(0xf, 2, 0))
-    return slot_a, slot_b
+    if android_slot is None:
+        android_slot = {b'_a': 'a', b'_b': 'b'}.get(bc[:2])
+    if android_slot not in ('a', 'b'):
+        raise ValueError('Android slot must be a or b')
+    index = 0 if android_slot == 'a' else 1
+    infos = [bc[12], bc[14]]
+    priority = infos[index] & 0xf
+    if priority < 2 or not infos[index] & 0x80:
+        raise ValueError('Selected Android slot is not successful/bootable')
+    infos[index] = slot_info(priority, 1, 1)
+    # The other boot partition is replaced by Linux in either layout. Its old
+    # Android success flag must not make an unconfirmed Linux boot bootable.
+    infos[1 - index] = 0
+    android = with_slots(b'_' + android_slot.encode() + b'\0\0', *infos)
+    infos[index] = slot_info((priority - 1) & 0xf, 1, 1)
+    infos[1 - index] = slot_info(0xf, 2, 0)
+    linux_slot = 'b' if android_slot == 'a' else 'a'
+    linux = with_slots(b'_' + linux_slot.encode() + b'\0\0', *infos)
+    # The legacy filenames mean Android fallback/Linux trial; retaining them
+    # preserves existing init/update protocols even when physical roles swap.
+    return android, linux
 
 
 def main():
@@ -132,6 +164,8 @@ def main():
     ap.add_argument('--stock-boot', required=True, type=Path,
                     help='stock boot image of the target slot (64 MiB, header v4, ramdisk_size 0)')
     ap.add_argument('--misc-head', required=True, type=Path, help='first 4 KiB of the misc partition')
+    ap.add_argument('--android-slot', choices=('a', 'b'),
+                    help='stock Android slot (default: derive from the stock misc suffix); Linux uses the opposite slot')
     ap.add_argument('--kernel', required=True, type=Path, help='arm64 Image built by kernel/build-linux.sh')
     ap.add_argument('--modules', type=Path, help='flat directory with the built .ko files')
     ap.add_argument('--module-order', type=Path, default=HERE / 'module-order.txt')
@@ -154,7 +188,7 @@ def main():
         sys.exit('stock boot is not an Android boot image header v4')
     ks0, rs0 = struct.unpack_from('<II', base, 8)
     print('base: kernel_size=0x%x ramdisk_size=0x%x' % (ks0, rs0))
-    slot_a_bc, slot_b_bc = bootloader_control(a.misc_head.read_bytes())
+    slot_a_bc, slot_b_bc = bootloader_control(a.misc_head.read_bytes(), a.android_slot)
     print('misc: slot_a=%s slot_b_trial=%s' % (slot_a_bc.hex(), slot_b_bc.hex()))
 
     if 'e5.part_v=2' not in a.cmdline.split():
@@ -169,6 +203,7 @@ def main():
         'bin/sh': (b'busybox', stat.S_IFLNK | 0o777),
         'etc/misc-bc-slot-a.bin': (slot_a_bc, stat.S_IFREG | 0o644),
         'etc/misc-bc-slot-b-trial.bin': (slot_b_bc, stat.S_IFREG | 0o644),
+        'etc/e5/linux-slot': (slot_b_bc[1:2] + b'\n', stat.S_IFREG | 0o644),
         'etc/sd-registry.sh': ((HERE.parent / 'rootfs/overlay/opt/e5/e5-sd-registry').read_bytes(), stat.S_IFREG | 0o644),
         'etc/f2fs-repair.sh': ((HERE / 'f2fs-repair.sh').read_bytes(), stat.S_IFREG | 0o644),
     }
@@ -237,18 +272,7 @@ def main():
                 overlay_files += 1
     print('overlay: %d files from %s' % (overlay_files, a.overlay))
 
-    cpio = bytearray()
-    ino = 1
-    for d in sorted(dirs, key=lambda x: (x.count('/'), x)):
-        cpio += cpio_record(d, b'', stat.S_IFDIR | 0o755, ino)
-        ino += 1
-    for name, (data, mode) in files.items():
-        cpio += cpio_record(name, data, mode, ino)
-        ino += 1
-    # the kernel opens /dev/console before running /init
-    cpio += cpio_record('dev/console', b'', stat.S_IFCHR | 0o600, ino, (5, 1))
-    ino += 1
-    cpio += cpio_record('TRAILER!!!', b'', 0, ino)
+    cpio = initramfs_archive(files, dirs)
 
     # LK decodes the generic ramdisk as an LZ4 *legacy* frame (magic 02 21 4c 18);
     # that is what the stock and Magisk boot images on this device use.
@@ -285,6 +309,9 @@ def main():
     a.out.with_suffix('.misc-slot-b-trial.bin').write_bytes(slot_b_bc)
     manifest = {
         'image': a.out.name,
+        'slot_roles_version': 1,
+        'android_slot': slot_a_bc[1:2].decode(),
+        'linux_slot': slot_b_bc[1:2].decode(),
         'sha256': hashlib.sha256(image).hexdigest(),
         'sha256_head56m': hashlib.sha256(image[:PERSIST_LOG_OFFSET]).hexdigest(),
         'kernel_sha256': hashlib.sha256(kern).hexdigest(),

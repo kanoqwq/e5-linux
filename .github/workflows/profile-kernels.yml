@@ -1,0 +1,73 @@
+name: Profile kernel artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['build/kernels-*']
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [e5, t551m, m8, t512n]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Enceka/linux-lts-e5
+          ref: 020b970e351eee3887e6caaf2d653926e7086e44
+          path: linux-lts-e5
+          persist-credentials: false
+      - name: Install native compiler tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm make bc bison flex libssl-dev libelf-dev dwarves gcc-aarch64-linux-gnu cpio
+      - name: Compile the profile and matching modules
+        env:
+          PROFILE: ${{ matrix.profile }}
+          JOBS: '4'
+        run: |
+          set -euo pipefail
+          export LOCALVERSION=
+          kernel="$GITHUB_WORKSPACE/linux-lts-e5"
+          objects="$RUNNER_TEMP/objects"
+          output="$RUNNER_TEMP/kernel-output"
+          case "$PROFILE" in
+            e5)
+              E5_KERNEL_TREE="$kernel" E5_OUTDIR="$objects" E5_FEATURE_OUT="$output" bash devices/e5/build-kernel.sh
+              ;;
+            t551m)
+              T551M_RELEASE=1 T551M_KERNEL="$kernel" T551M_BUILD="$objects" T551M_OUT="$output" bash devices/t551m/build-kernel.sh
+              ;;
+            m8)
+              M8_KERNEL="$kernel" M8_BUILD="$objects" M8_OUT="$output" bash devices/m8/build-probe.sh
+              python3 devices/m8/package-kernel.py --build "$objects" --out "$output"
+              ;;
+            t512n)
+              T512N_RELEASE=1 T512N_KERNEL="$kernel" T512N_BUILD="$objects" T512N_OUT="$output" bash devices/t512n/build-kernel.sh
+              ;;
+          esac
+          python3 devices/common/test_fuel_gauge.py "$kernel"
+          python3 devices/common/test_fgu_latch.py "$kernel"
+          python3 devices/common/test_charger_jeita.py "$kernel"
+          if [ "$PROFILE" = e5 ]; then
+            python3 devices/e5/test_charger.py "$kernel"
+          fi
+          python3 upstream/check-container-support.py "$output"
+          git rev-parse HEAD > "$output/repository-commit"
+          git -C "$kernel" rev-parse HEAD > "$output/kernel-source-commit"
+          # Retain native filesystem names and Unix permissions during transport.
+          tar -czf "$RUNNER_TEMP/kernel-$PROFILE.tar.gz" -C "$output" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.profile }}
+          path: ${{ runner.temp }}/kernel-${{ matrix.profile }}.tar.gz
+          if-no-files-found: error

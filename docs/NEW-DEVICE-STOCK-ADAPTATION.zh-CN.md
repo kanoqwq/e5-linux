@@ -22,6 +22,7 @@
 | --- | --- | --- | --- |
 | 电量锁存、开机恢复 | `devices/common/fuel-gauge.py`；state、diagnostics、stock-latches 补丁 | `upstream/patches/0020-power-UMP9620-stock-retained-soc.patch` | 先核对 PMIC 格式、有效位、masked RMW 与等待时间，不把有效旧值按 OCV 重算 |
 | 满电/回充 | `charger-stock-policy.patch` 恢复电气判断、平滑及滞回 | 0020 使用 charger Full + 原厂 DT 的 fullbatt-voltage/current | 不加 99% 上限，不因 UI 100% 直接退出管理，不搬其他板电流电压 |
+| 充电但显示不涨（2026-10-21） | `charger-jeita-state.patch` 恢复原厂温控初始化；`fuel-gauge-set-latch.patch` 保证 SET 命令实际发出；E5 独立补 AW 状态同步 | 本轮未修改 MU300，不能推定已同步 | [证据与范围](E5-CHARGING-SOC-20261021.zh-CN.md)：同时比对 FGU/CM/芯片状态及净电流；总线跟踪确认 SET/CLEAR 行为，保留温控和正常平滑 |
 | 电池板隔离 | 按设备 DT 的充电节点及实际驱动选择 | 0019 + `ump9620_has_battery_policy()`；BQ/FGU/PD 首次硬件访问前校验 | UMP9620 vendor 路径要求启用的 charger_policy_service，主、备用地址都覆盖 |
 | 空闲省电 | 三机 CPU idle；watchdog/DPU/GPU/camera 补丁按 compatible 及设备配置应用 | `upstream/mu300-mainline.config` 启用 NO_HZ_IDLE/HIGH_RES_TIMERS | 对照原厂配置；HZ=250 不变，不降低看板/业务轮询频率；无屏板不带显示/相机修改 |
 | 未满足的自动拨号恢复 | `e5-network-recovery` 订阅 MM D-Bus 与 netifd；检查 PS 附着/注册/RAT | `mu300-network-recovery` 订阅既有 owner 的 EPS 注册变化与 netifd | 手动断网不得复活；仅当前上网槽；不新增串口 owner、不重置射频 |

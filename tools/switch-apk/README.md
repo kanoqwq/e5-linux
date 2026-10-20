@@ -1,6 +1,7 @@
 # op系统切换器
 
-适用于 E5、T551M、VIPME M8 的 Android A／OpenWrt B 安装布局，需要 root。
+适用于 E5 仓库已适配机型，需要 root。根据当前 Android A/B 动态选择另一槽的 OpenWrt，
+不要求 Android 固定在 A；远航 41S 的 Android B／OpenWrt A 也按同一规则处理。
 APK 文件为 `op-system-switcher.apk`，包名保留 `com.minikano.e5switch`，可覆盖安装旧版。
 
 点开应用选择 OpenWrt 或 Android，确认后只设置下次启动，再选择是否立即重启。
@@ -22,9 +23,19 @@ APK 文件为 `op-system-switcher.apk`，包名保留 `com.minikano.e5switch`，
 旧版 `e5-switch.apk` 会读写挂载 e5root 来改变默认启动设置，请换成新版。
 本工具不能用于 MU300／F50／V50，其槽位和启动规则不同。
 
+## UFI 网页插件
+
+完整安装包另附 `extras/openwrt-system-switch-plugin.js`。v5 支持 E5、T551M、
+M8、T512N、远航 41S（ZTE 7546N）和守护宝 K1，以及 MU300 系列。
+E5 系列不再要求 Android 固定在 A 槽，也不再以 `verifiedbootstate=orange`
+作为切换前提；仍核对已安装的 OpenWrt 镜像格式、当前 Android 槽位和 misc CRC。
+
+插件只备份、修改并回读 misc 的 32 字节控制块，不挂载根文件系统、不改默认
+启动策略；验证成功才重启。APK 和 JS 均不能代替首次安装及安装器的启动链同步。
+
 ## 安装
 
-三机型发布包包含 `extras/android/op-system-switcher.apk`，在 Android 中打开安装，
+发布包包含 `extras/android/op-system-switcher.apk`，在 Android 中打开安装，
 首次使用时授予 root。也可在电脑上执行：
 
 ```sh

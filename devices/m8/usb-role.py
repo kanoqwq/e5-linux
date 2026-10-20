@@ -169,6 +169,9 @@ def apply(kernel):
 '''
     if text.count(init) != 1:
         raise ValueError('Type-C work initialization anchor')
-    text = text.replace(init, '')
-    text = text.replace('\tret = devm_request_threaded_irq(sc->dev,', init + '\n\tret = devm_request_threaded_irq(sc->dev,')
+    irq_anchor = '\tret = devm_request_threaded_irq(sc->dev,'
+    placed = init + '\n' + irq_anchor
+    if placed not in text:
+        text = text.replace(init, '')
+        text = text.replace(irq_anchor, placed)
     path.write_text(text)

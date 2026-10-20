@@ -1,0 +1,54 @@
+--- a/drivers/power/supply/sprd_fuel_gauge_core.c
++++ b/drivers/power/supply/sprd_fuel_gauge_core.c
+@@ -11,6 +11,7 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/iio/consumer.h>
+ #include <linux/init.h>
+ #include <linux/interrupt.h>
++#include <linux/iopoll.h>
+ #include <linux/kernel.h>
+ #include <linux/math64.h>
+@@ -2006,6 +2006,23 @@
+ 	return ret;
+ }
+ 
++static int sprd_fgu_read_saved_cap(struct sprd_fgu_info *info,
++		int (*read_cap)(struct sprd_fgu_info *, int *),
++		int expected, int *actual)
++{
++	int ret, timeout;
++
++	/* STATUS crosses the always-on RTC clock domain. E5 traces show a
++	 * transient cleared value even after SET/CLEAR completed. Recheck at
++	 * the existing 200us latch interval; stop as soon as it is committed.
++	 * The 2ms completion deadline bounds faulty hardware, not SOC itself.
++	 * Never reinterpret a valid zero or replace the requested capacity.
++	 */
++	timeout = read_poll_timeout(read_cap, ret, ret || *actual == expected,
++				  200, 2000, false, info, actual);
++	return ret ? ret : timeout;
++}
++
+ 
+ static int sprd_fgu_save_capacity(struct sprd_fgu_data *data, int ui_cap)
+ {
+@@ -2023,7 +2039,8 @@
+ 		ret = info->ops->save_last_cap(info, ui_cap);
+ 		if (ret)
+ 			continue;
+-		ret = info->ops->read_last_cap(info, &actual);
++		ret = sprd_fgu_read_saved_cap(info, info->ops->read_last_cap,
++					    ui_cap, &actual);
+ 		if (!ret && actual == ui_cap)
+ 			break;
+ 		if (!ret)
+@@ -2045,7 +2062,8 @@
+ 		ret = info->ops->save_normal_temperature_cap(info, data->normal_temp_cap);
+ 		if (ret)
+ 			continue;
+-		ret = info->ops->read_normal_temperature_cap(info, &actual);
++		ret = sprd_fgu_read_saved_cap(info, info->ops->read_normal_temperature_cap,
++					    data->normal_temp_cap, &actual);
+ 		if (!ret && actual == data->normal_temp_cap)
+ 			return 0;
+ 		if (!ret)

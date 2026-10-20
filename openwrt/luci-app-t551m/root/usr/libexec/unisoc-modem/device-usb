@@ -69,6 +69,14 @@ def role_now():
     return 'none'
 
 
+def role_modes():
+    modes = ['auto', 'device', 'host']
+    path = role_path()
+    if path and read(path.with_name('usb_host_sink_supported')) == '1':
+        modes.append('host-sink')
+    return modes
+
+
 def job_read():
     try:
         return json.loads((RUN / 'role.json').read_text())
@@ -238,6 +246,7 @@ def state():
     supported = net_modes()
     return dict(ok=1, role=role_now(), policy=read(path, 'auto') if path else 'auto',
                 role_auto=int(setting('role_auto') == '1'), host_supported=int(path is not None),
+                role_supported=role_modes(),
                 net_mode=setting('net_mode', 'ncm'), net_scope=setting('net_scope', 'permanent'),
                 net_auto=int(setting('net_auto') == '1'), net_available=int(len(supported) > 1),
                 net_current=net_current(), net_supported=supported,
@@ -247,7 +256,7 @@ def state():
 
 
 def queue_role(role, auto):
-    if role not in ('auto', 'host', 'device') or auto not in ('0', '1'):
+    if role not in role_modes() or auto not in ('0', '1'):
         raise ValueError('无效的 USB 角色设置')
     if role != 'host' and auto != '0':
         raise ValueError('只有主机模式支持开机自动应用')
@@ -269,6 +278,8 @@ def apply_role(role, auto, token):
         path = role_path()
         if path is None:
             raise RuntimeError('USB 角色接口不可用')
+        if role not in role_modes() or auto not in ('0', '1') or (role != 'host' and auto != '0'):
+            raise RuntimeError('当前内核不支持所选 USB 角色')
         path.write_text(role + '\n')
         if read(path) != role:
             raise RuntimeError('内核未接受 USB 角色设置')

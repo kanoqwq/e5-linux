@@ -226,7 +226,7 @@ APN_SELECTION = '''\t# unisoc-apn-selection: shared by E5, T551M and M8 on every
 
 
 def patch_root(root, profile='t551m'):
-    if profile not in ('t551m', 'e5', 'm8', 't512n'):
+    if profile not in ('t551m', 'e5', 'm8', 't512n', 'yuanhang41s', 'k1'):
         raise ValueError('Unknown device profile: ' + profile)
     for asset in ('usr/libexec/e5-network-recovery', 'etc/init.d/e5-network-recovery'):
         source = Path(__file__).resolve().parents[2] / 'openwrt/overlay' / asset
@@ -443,6 +443,6 @@ def patch_root(root, profile='t551m'):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--profile', choices=('t551m', 'e5', 'm8', 't512n'), default='t551m')
+    parser.add_argument('--profile', choices=('t551m', 'e5', 'm8', 't512n', 'yuanhang41s', 'k1'), default='t551m')
     args = parser.parse_args()
     patch_root(args.root, args.profile)

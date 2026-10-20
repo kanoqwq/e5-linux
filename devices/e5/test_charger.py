@@ -20,20 +20,27 @@ prelude = r'''
 #define min(a,b) ((a)<(b)?(a):(b))
 #define AW32257_CHARGER_DISABLE 1
 #define AW32257_REG_CURRENT 4
+#define AW32257_REG_CONTROL 1
 #define AW32257_MASK_VI_CHRG 0x78
 #define AW32257_MASK_RESET 0x80
 #define AW32257_SHIFT_VI_CHRG 3
 struct aw32257_device {
  int requested_charge_ua,input_budget_ua,charging;
+ int pmic,charger_pd,charger_pd_mask,lock;
  struct {int resistor_sense;} init_data;
 };
 static unsigned char registers[11]={0xd0,0x30,0xae,0x53,1,0x22,0xfb,0x11,0xff,0,0};
-static int failure;
+static int failure,pmic_failure;
+static int regmap_update_bits(int map,int reg,int mask,int value) {
+ (void)map;(void)reg;(void)mask;(void)value;return pmic_failure?-EIO:0;
+}
+static void mutex_lock(int *lock){assert(!*lock);*lock=1;}
+static void mutex_unlock(int *lock){assert(*lock);*lock=0;}
 static int aw32257_exec_command(struct aw32257_device *b,int cmd) {
  (void)b;(void)cmd;if(failure)return -EIO;registers[1]|=4;return 0;
 }
 static int aw32257_i2c_write_mask(struct aw32257_device *b,int reg,int value,int mask,int shift) {
- (void)b;if(failure)return -EIO;assert(reg==4);registers[reg]=(registers[reg]&~mask)|((value<<shift)&mask);return 0;
+ (void)b;if(failure)return -EIO;assert(reg==4||reg==1);registers[reg]=(registers[reg]&~mask)|((value<<shift)&mask);return 0;
 }
 static int aw32257_i2c_read_mask(struct aw32257_device *b,int reg,int mask,int shift) {
  (void)b;return failure?-EIO:(registers[reg]&mask)>>shift;
@@ -45,10 +52,6 @@ union power_supply_propval {int intval;};
 struct power_supply {struct aw32257_device *data;};
 static void *power_supply_get_drvdata(struct power_supply *p) {return p->data;}
 #define dev_err(...) ((void)0)
-static int aw32257_charger_set_status(struct aw32257_device *b,int value) {
- if(failure)return -EIO;
- b->charging=!!value;return 0;
-}
 static int aw32257_set_battery_regulation_voltage(struct aw32257_device *b,int value) {
  (void)b;(void)value;return 0;
 }
@@ -76,13 +79,29 @@ int main(void) {
  assert(aw32257_set_charge_current(&b,0)==0 && !b.charging && (registers[1]&4));
  assert(aw32257_current_code(-1,33)==-EINVAL && aw32257_current_code(500000,0)==-EINVAL);
  assert(registers[1]==0x34 && registers[2]==0xae && registers[6]==0xfb);
+ b.requested_charge_ua=650000;
  struct power_supply psy={&b};union power_supply_propval v={.intval=1};
  assert(aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_CALIBRATE,&v)==0 && b.charging);
  v.intval=0;
  assert(aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_CALIBRATE,&v)==0 && !b.charging);
  failure=1;v.intval=1;
  assert(aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_CALIBRATE,&v)==-EIO && !b.charging);
- puts("PASS: all 16 native current codes, floor/clamp, SDP budget, DCP restore, cold/zero current, I2C errors, reserved/voltage/safety registers preserved");
+ failure=0;
+ /* Real CE may be enabled even while the software state says stopped. */
+ registers[1]=0x30;b.charging=0;v.intval=0;
+ assert(!aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_STATUS,&v));
+ assert(registers[1]==0x34&&!b.charging&&!b.lock);
+ /* Stock start clears HiZ/boost too, retaining all other control bits. */
+ registers[1]=0x37;v.intval=1;
+ assert(!aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_STATUS,&v));
+ assert(registers[1]==0x30&&b.charging&&!b.lock);
+ failure=1;v.intval=0;
+ assert(aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_STATUS,&v)==-EIO&&b.charging&&!b.lock);
+ failure=0;pmic_failure=1;
+ assert(aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_STATUS,&v)==-EIO&&b.charging&&!b.lock);
+ pmic_failure=0;v.intval=1;b.input_budget_ua=0;
+ assert(aw32257_power_supply_set_property(&psy,POWER_SUPPLY_PROP_STATUS,&v)==-ERANGE&&!b.lock);
+ puts("PASS: native current codes, USB budgets, real stop despite stale flag, stock start bits, failed commands preserve state and release mutex");
 }
 '''
 # Avoid the prototype when looking up the setter body.
@@ -90,6 +109,8 @@ source = source.replace('static int aw32257_set_charge_current(struct aw32257_de
 functions = '\n'.join(extract(source, name) for name in (
     'aw32257_set_charge_current', 'aw32257_get_charge_current',
     'aw32257_set_current_limit', 'aw32257_get_current_limit',
+    'aw32257_charger_start_charge','aw32257_charger_stop_charge',
+    'aw32257_charger_set_status','aw32257_power_supply_set_property_locked',
     'aw32257_power_supply_set_property'))
 with tempfile.TemporaryDirectory() as directory:
     c = Path(directory) / 'test.c'

@@ -103,10 +103,17 @@ struct sprd_fgu_info { struct ops *ops; };
 struct sprd_fgu_data {struct sprd_fgu_info *fgu_info;int dev,boot_volt_uv,cap_table,table_len,normal_temp_cap,boot_cap;bool is_first_poweron;};
 static int retained_ui,retained_normal,ui_read_error,normal_read_error,voltage_error,ui_writes,normal_writes,mode_writes;
 static int fail_ui_writes,fail_normal_writes,mismatch_ui_reads,mismatch_normal_reads,temp_loss;
+static int settle_ui,settle_normal,settle_waits;
+#define read_poll_timeout(op,val,cond,sleep,timeout,before,...) ({ \
+ int status=-ETIMEDOUT; \
+ assert((sleep)==200&&(timeout)==2000&&!(before)); \
+ for(int elapsed=0;elapsed<=timeout;elapsed+=sleep) { \
+  val=op(__VA_ARGS__);if(cond){status=0;break;}settle_waits++; \
+ } status; })
 static bool first_power;
 static bool first(struct sprd_fgu_info *i){(void)i;return first_power;}
-static int read_ui(struct sprd_fgu_info *i,int *v){(void)i;*v=retained_ui+(mismatch_ui_reads?1:0);return ui_read_error;}
-static int read_normal(struct sprd_fgu_info *i,int *v){(void)i;*v=retained_normal+(mismatch_normal_reads?1:0);return normal_read_error;}
+static int read_ui(struct sprd_fgu_info *i,int *v){(void)i;*v=retained_ui+(mismatch_ui_reads?1:0);if(settle_ui>0){settle_ui--;*v=0;}return ui_read_error;}
+static int read_normal(struct sprd_fgu_info *i,int *v){(void)i;*v=retained_normal+(mismatch_normal_reads?1:0);if(settle_normal>0){settle_normal--;*v=0;}return normal_read_error;}
 static int save_ui(struct sprd_fgu_info *i,int v){(void)i;ui_writes++;if(fail_ui_writes>0){fail_ui_writes--;return -EIO;}retained_ui=v;return 0;}
 static int save_normal(struct sprd_fgu_info *i,int v){(void)i;normal_writes++;if(fail_normal_writes>0){fail_normal_writes--;return -EIO;}retained_normal=v;return 0;}
 static int save_mode(struct sprd_fgu_info *i,int mode){(void)i;assert(mode==5);mode_writes++;return 0;}
@@ -121,6 +128,7 @@ static struct sprd_fgu_data fresh(void) {
  retained_ui=retained_normal=630;ui_read_error=normal_read_error=voltage_error=0;
  ui_writes=normal_writes=mode_writes=0;fail_ui_writes=fail_normal_writes=0;
  mismatch_ui_reads=mismatch_normal_reads=temp_loss=0;first_power=false;
+ settle_ui=settle_normal=settle_waits=0;
  return (struct sprd_fgu_data){.fgu_info=&info};
 }
 '''
@@ -140,10 +148,15 @@ int main(void) {
  d=fresh();voltage_error=-EIO;assert(sprd_fgu_get_boot_capacity(&d,&cap)==-EIO&&!ui_writes&&!normal_writes);
  puts("PASS: preserve valid saved SOC, recover invalid field/pair, first-boot temperature semantics, true empty/full and read errors");
  d=fresh();d.normal_temp_cap=600;assert(!sprd_fgu_save_capacity(&d,610));assert(retained_ui==610&&retained_normal==600&&ui_writes==1&&normal_writes==1);
+ d=fresh();d.normal_temp_cap=1000;settle_ui=settle_normal=1;
+ assert(!sprd_fgu_save_capacity(&d,1000)&&ui_writes==1&&normal_writes==1&&settle_waits==2);
+ d=fresh();d.normal_temp_cap=1000;settle_ui=settle_normal=5;
+ assert(!sprd_fgu_save_capacity(&d,1000)&&ui_writes==1&&normal_writes==1&&settle_waits==10);
+ d=fresh();d.normal_temp_cap=0;assert(!sprd_fgu_save_capacity(&d,0)&&!settle_waits);
  d=fresh();d.normal_temp_cap=600;fail_ui_writes=1;assert(!sprd_fgu_save_capacity(&d,610));assert(ui_writes==2&&normal_writes==1);
  d=fresh();d.normal_temp_cap=600;fail_ui_writes=2;assert(sprd_fgu_save_capacity(&d,610)==-EIO);assert(ui_writes==2&&!normal_writes);
- d=fresh();d.normal_temp_cap=600;mismatch_ui_reads=1;assert(sprd_fgu_save_capacity(&d,610)==-EIO);assert(ui_writes==2&&!normal_writes);
- d=fresh();d.normal_temp_cap=600;mismatch_normal_reads=1;assert(sprd_fgu_save_capacity(&d,610)==-EIO);assert(normal_writes==2);
+ d=fresh();d.normal_temp_cap=600;mismatch_ui_reads=1;assert(sprd_fgu_save_capacity(&d,610)==-ETIMEDOUT);assert(ui_writes==2&&!normal_writes);
+ d=fresh();d.normal_temp_cap=600;mismatch_normal_reads=1;assert(sprd_fgu_save_capacity(&d,610)==-ETIMEDOUT);assert(normal_writes==2);
  d=fresh();d.normal_temp_cap=1001;assert(sprd_fgu_save_capacity(&d,610)==-ERANGE&&!ui_writes&&!normal_writes);
  d=fresh();assert(sprd_fgu_save_capacity(&d,-1)==-ERANGE&&!ui_writes);assert(sprd_fgu_save_capacity(&d,1001)==-ERANGE&&!ui_writes);
  d=fresh();d.normal_temp_cap=SPRD_FGU_MAGIC_NUMBER;assert(!sprd_fgu_save_capacity(&d,610));assert(ui_writes==1&&!normal_writes);
@@ -177,6 +190,60 @@ int main(void) {
 '''
 
 
+REMOVE_STUBS = r'''
+struct power_supply { bool alive; };
+struct charger_manager;
+struct ops {void (*remove)(void *);};
+struct info {struct ops *ops;};
+struct charger_manager {int entry,cap_update_work,fullbatt_vchk_work,uvlo_work;
+ struct info *fchg_info,*vchg_info; struct power_supply *charger_psy;};
+struct platform_device {struct charger_manager *cm;};
+static int cm_list_mtx,setup_polling,cm_monitor_work,cancels,disabled;
+static struct charger_manager *platform_get_drvdata(struct platform_device *p){return p->cm;}
+static void mutex_lock(int *p){assert(!*p);*p=1;}
+static void mutex_unlock(int *p){assert(*p);*p=0;}
+static void list_del(int *p){(void)p;assert(cm_list_mtx);}
+static void cancel_work_sync(int *p){(void)p;cancels++;}
+static void cancel_delayed_work_sync(int *p){(void)p;cancels++;}
+static void try_charger_enable(struct charger_manager *c,bool on){assert(!on&&c->charger_psy->alive);disabled++;}
+'''
+
+REMOVE_MAIN = r'''
+int main(void){
+ struct power_supply psy={true};struct info info={0};
+ struct charger_manager cm={.fchg_info=&info,.vchg_info=&info,.charger_psy=&psy};
+ struct platform_device dev={&cm};charger_manager_remove(&dev);
+ assert(cancels==5&&disabled==1&&psy.alive);
+ /* devres owns the only release, after remove has finished. */
+ psy.alive=false;
+ puts("PASS: CM remove stops writers and disables charging before its single devres release");
+}
+'''
+
+
+CHARGE_STUBS = r'''
+typedef long long s64;
+#define CM_CAP_FULL_PERCENT 1000
+struct desc {int cap;};struct charger_manager {int dev;struct desc *desc;};
+static int total=5000000,read_error;
+static int get_batt_total_cap(struct charger_manager *c,int *v){(void)c;*v=total;return read_error;}
+static long long div_s64(long long value,int divisor){return value/divisor;}
+'''
+CHARGE_MAIN = r'''
+int main(void){
+ struct desc d={0};struct charger_manager cm={.desc=&d};int result;
+ int sizes[]={2000000,3100000,4000000,5000000,6000000,10000000,20000000};
+ for(unsigned n=0;n<sizeof(sizes)/sizeof(sizes[0]);n++)for(d.cap=0;d.cap<=1000;d.cap++){
+  total=sizes[n];assert(!cm_get_charge_now(&cm,&result));
+  assert(result==(long long)total*d.cap/1000);
+ }
+ total=5000000;d.cap=948;assert(!cm_get_charge_now(&cm,&result)&&result==4740000);
+ read_error=-EIO;assert(cm_get_charge_now(&cm,&result)==-EIO);
+ puts("PASS: charge_now 2-20 Ah at all 1001 SOC values, 94.8% regression and read errors; no signed multiply overflow");
+}
+'''
+
+
 def main():
     kernel=Path(sys.argv[1]).resolve()
     paths=[line[6:] for line in (HERE/'fuel-gauge-state.patch').read_text().splitlines() if line.startswith('+++ b/')]
@@ -191,8 +258,10 @@ def main():
         hardware=(root/paths[0]).read_text();core=(root/paths[1]).read_text();cm=(root/paths[2]).read_text()
         cases=[
             ('registers',REGISTER_STUBS,'\n'.join(function(hardware,n) for n in ('ump96xx_fgu_read_last_cap','ump96xx_fgu_read_normal_temperature_cap','ump96xx_fgu_save_last_cap','ump96xx_fgu_save_normal_temperature_cap')),REGISTER_MAIN),
-            ('restore',CORE_STUBS,function(core,'sprd_fgu_get_boot_capacity')+'\n'+function(core,'sprd_fgu_save_capacity'),CORE_MAIN),
+            ('restore',CORE_STUBS,function(core,'sprd_fgu_get_boot_capacity')+'\n'+function(core,'sprd_fgu_read_saved_cap')+'\n'+function(core,'sprd_fgu_save_capacity'),CORE_MAIN),
             ('shutdown',SHUTDOWN_STUBS,function(cm,'charger_manager_shutdown'),SHUTDOWN_MAIN),
+            ('remove',REMOVE_STUBS,function(cm,'charger_manager_remove'),REMOVE_MAIN),
+            ('charge-now',CHARGE_STUBS,function(cm,'cm_get_charge_now'),CHARGE_MAIN),
         ]
         for name,stubs,body,main_code in cases:
             source=root/(name+'.c');source.write_text(PRELUDE+stubs+body+main_code)

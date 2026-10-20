@@ -12,8 +12,17 @@ TOP = Path(__file__).resolve().parents[2]
 source_bytes = runpy.run_path(str(TOP / 'devices/staging.py'))['source_bytes']
 
 
+def ensure_ttyd_config(root):
+    root = Path(root)
+    config = root / 'etc/config/ttyd'
+    if (root / 'usr/bin/ttyd').is_file() and not (config.exists() or config.is_symlink()):
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("config ttyd\n option interface '@lan'\n option command '/bin/login'\n")
+        config.chmod(0o644)
+
+
 def prepare(base, root, defaults, profile='m8'):
-    if profile not in ('e5', 't551m', 'm8', 't512n'):
+    if profile not in ('e5', 't551m', 'm8', 't512n', 'yuanhang41s', 'k1'):
         raise ValueError('Unknown device profile')
     base, root = base.resolve(), root.resolve()
     if os.name == 'nt' or root.exists() or base == Path('/'):
@@ -50,17 +59,23 @@ def prepare(base, root, defaults, profile='m8'):
     (root / 'root').chmod(0o700)
     with tarfile.open(defaults) as archive:
         for item in archive:
-            if profile == 't512n' and item.name == 'etc/config/unisoc_modem':
+            if profile in ('t512n', 'yuanhang41s', 'k1') and item.name == 'etc/config/unisoc_modem':
                 # A clean T512N build takes fresh shared defaults, never a
                 # prebuilt donor's auto_work_mode or LTE capability override.
                 continue
             if (item.isfile() and '..' not in Path(item.name).parts and
                     (item.name.startswith('etc/config/') or item.name in ('etc/hosts', 'etc/ethers'))):
                 put(item.name, archive.extractfile(item).read(), item.mode)
+    # The sanitized base excludes all UCI files. A defaults archive predating
+    # ttyd can therefore leave an installed package without its configuration;
+    # apk add sees it as installed and will not recreate the missing conffile.
+    # Match the package defaults, and preserve any explicit defaults supplied.
+    ensure_ttyd_config(root)
     for p in (TOP / 'openwrt/overlay').rglob('*'):
         if p.is_file() and '__pycache__' not in p.parts:
             name = p.relative_to(TOP / 'openwrt/overlay').as_posix()
-            executable = name.startswith(('etc/init.d/', 'etc/uci-defaults/', 'etc/hotplug.d/', 'usr/libexec/', 'sbin/'))
+            executable = name.startswith(('etc/init.d/', 'etc/uci-defaults/', 'etc/hotplug.d/',
+                                          'usr/libexec/', 'usr/sbin/', 'usr/bin/', 'sbin/', 'bin/'))
             put(name, source_bytes(p),
                 0o755 if executable else 0o644)
     put('etc/config/network', "config interface 'loopback'\n option device 'lo'\n option proto 'static'\n option ipaddr '127.0.0.1'\n option netmask '255.0.0.0'\n\nconfig device\n option name 'br-lan'\n option type 'bridge'\n option bridge_empty '1'\n\nconfig interface 'lan'\n option device 'br-lan'\n option proto 'static'\n option ipaddr '192.168.9.1'\n option netmask '255.255.255.0'\n")
@@ -68,6 +83,11 @@ def prepare(base, root, defaults, profile='m8'):
     put('etc/config/wireless', '')
     put('etc/config/e5-infoscreen', (root / 'usr/share/e5-infoscreen/default.config').read_bytes())
     # New credentials and machine identity; never copy a donor device's secrets.
+    # Incremental bases already contain the stock backup implementation.
+    # Refresh the shared guard too, rather than retaining an older guard.
+    if not (root / 'sbin/sysupgrade.openwrt').is_file():
+        raise ValueError('Clean base lacks the original sysupgrade backup implementation')
+    put('sbin/sysupgrade', source_bytes(TOP / 'openwrt/overlay/usr/libexec/e5-sysupgrade'), 0o755)
     # Common first-boot hook sets root/root; no donor password hashes.
     password = ''
     lines = []
@@ -76,7 +96,7 @@ def prepare(base, root, defaults, profile='m8'):
         fields[1] = password if fields[0] == 'root' else '!'
         lines.append(':'.join(fields))
     put('etc/shadow', '\n'.join(lines) + '\n', 0o600)
-    put('etc/hostname', {'e5': 'E5', 't551m': 'T551M', 'm8': 'VIPME-M8', 't512n': 'T512N'}[profile] + '\n')
+    put('etc/hostname', {'e5': 'E5', 't551m': 'T551M', 'm8': 'VIPME-M8', 't512n': 'T512N', 'yuanhang41s': 'Yuanhang-41S', 'k1': 'Angelcare-K1'}[profile] + '\n')
     put('etc/machine-id', '')
     for p in (TOP / 'rootfs/overlay/opt/e5').iterdir():
         if p.is_file():
@@ -87,10 +107,11 @@ def prepare(base, root, defaults, profile='m8'):
     stage_path = 'devices/t551m/configure-rootfs.py' if profile == 't551m' else f'devices/{profile}/stage.py'
     runpy.run_path(str(TOP / stage_path))['stage'](root)
     for path in (root / 'etc/uci-defaults/90-e5',):
-        hostname = {'e5': 'E5', 't551m': 'T551M', 'm8': 'VIPME-M8', 't512n': 'T512N'}[profile]
+        hostname = {'e5': 'E5', 't551m': 'T551M', 'm8': 'VIPME-M8', 't512n': 'T512N', 'yuanhang41s': 'Yuanhang-41S', 'k1': 'Angelcare-K1'}[profile]
         path.write_text(path.read_text().replace("hostname='E5'", "hostname='" + hostname + "'"))
     put('etc/e5/image-form', 'standalone\n')
     put('etc/e5/image-version', profile + '-tf\n')
+    runpy.run_path(str(TOP / 'installer/stage-ota.py'))['stage'](root)
     # The base ships kernel Docker support only, not a Docker installation.
     if (root / 'usr/bin/dockerd').exists():
         raise ValueError('Unexpected preinstalled Docker')

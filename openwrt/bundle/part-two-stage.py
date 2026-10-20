@@ -6,15 +6,53 @@ until stock recovery has finished and the user grants adb/su again.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import runpy
 import struct
 import time
 import uuid
 
 
+def recovery_message_kind(raw):
+    """Accept only an empty BCB or the exact bootloader-only command.
+
+    Status, recovery arguments, stage and vendor/reserved bytes must all be
+    empty. A bootloader request is not a recovery/OTA request, but must be
+    backed up and cleared before arming an explicitly confirmed installation.
+    """
+    if len(raw) != 2048:
+        raise ValueError('Incomplete misc recovery message / misc 恢复消息读取不完整')
+    if raw == bytes(2048):
+        return 'empty'
+    if raw == b'bootonce-bootloader'.ljust(2048, b'\0'):
+        return 'bootloader-only'
+    raise ValueError('An existing recovery/update request or unknown misc content is present; '
+                     'finish it before preparing data / misc 中存在恢复、升级请求或未知内容，请先处理后再安装')
+
+
+def clear_bootloader_command_script(raw, control):
+    if recovery_message_kind(raw) != 'bootloader-only' or len(control) != 32:
+        raise ValueError('Invalid bootloader-command clearance evidence')
+    before = hashlib.sha256(raw).hexdigest()
+    empty = hashlib.sha256(bytes(2048)).hexdigest()
+    bc = hashlib.sha256(control).hexdigest()
+    return (
+        'set -e; '
+        'bcb_hash() { dd if=/dev/block/by-name/misc bs=2048 count=1 2>/dev/null | sha256sum | cut -d " " -f1; }; '
+        'bc_hash() { dd if=/dev/block/by-name/misc bs=1 skip=2048 count=32 2>/dev/null | sha256sum | cut -d " " -f1; }; '
+        f'[ "$(bcb_hash)" = {before} ] && [ "$(bc_hash)" = {bc} ] || '
+        '{ echo "misc changed since backup; nothing cleared" >&2; exit 1; }; '
+        'dd if=/dev/zero of=/dev/block/by-name/misc bs=32 count=1 conv=notrunc,fsync; '
+        f'[ "$(bcb_hash)" = {empty} ] && [ "$(bc_hash)" = {bc} ] || '
+        '{ echo "misc command clearance readback failed; do not reboot" >&2; exit 1; }')
+
+
 def boot_command(image, option):
-    if image[:8] != b'ANDROID!' or struct.unpack_from('<I', image, 40)[0] != 4:
+    if not re.fullmatch(r'e5\.(?:root=part|part_prepare=[0-9a-f]{32}:[0-9a-f]{32}:mmcblk[0-9]p[0-9]+:(?:[0-9]+:){4}[0-9a-f]{64})', option):
+        raise ValueError('invalid partition boot request')
+    if len(image) < 1584 or image[:8] != b'ANDROID!' or struct.unpack_from('<I', image, 40)[0] != 4:
         raise ValueError('expected Android boot header v4')
     command = image[44:1580].split(b'\0', 1)[0].decode('ascii')
     if 'e5.part_v=2' not in command.split():
@@ -26,20 +64,35 @@ def boot_command(image, option):
         raise ValueError('boot command line is full')
     result = bytearray(image)
     result[44:1580] = updated.ljust(1536, b'\0')
-    return bytes(result)
+    here = Path(__file__).resolve().parent
+    parser = here / 'boot-args.sh'
+    if not parser.is_file():
+        # Source checkout; packaged helpers live together in scripts/installer.
+        parser = here.parents[1] / 'boot/boot-args.sh'
+    if not parser.is_file():
+        raise ValueError('Package is missing the embedded boot request reader; nothing written')
+    append = runpy.run_path(str(here / 'boot-slots.py'))['append_ramdisk']
+    return append(bytes(result), {'etc/boot-args.sh': parser.read_bytes(),
+                                 'etc/e5/boot-request': (option + '\n').encode('ascii')})
 
 
 def save(path, state):
     tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding='utf-8')
+    with tmp.open('w', encoding='utf-8') as stream:
+        json.dump(state, stream, indent=2, ensure_ascii=False)
+        stream.flush()
+        os.fsync(stream.fileno())
     tmp.replace(path)
 
 
 def validate_state(state):
-    if state.get('version') != 2 or state.get('phase') not in ('prepared', 'awaiting-android', 'writing', 'installed', 'complete'):
+    if state.get('version') != 2 or state.get('phase') not in ('prepared', 'rearming', 'awaiting-android', 'writing', 'installed', 'complete'):
         raise ValueError('invalid transaction or unsupported state')
     if not re.fullmatch('[0-9a-f]{32}', state.get('token', '')):
         raise ValueError('invalid transaction token')
+    if 'android_slot' in state or 'linux_slot' in state:
+        if state.get('android_slot') not in ('a', 'b') or state.get('linux_slot') != ('b' if state['android_slot'] == 'a' else 'a'):
+            raise ValueError('invalid transaction slot roles')
     for key in ('need', 'target', 'raw_size'):
         value = state.get(key)
         if type(value) is not int or not 0 < value < 1 << 40:
@@ -113,11 +166,15 @@ def backup_gpt(g, data, directory):
 
 
 def flash_boot(g, path):
+    _, linux = g['current_slots']()
+    payload = g['bind_boot_image'](path.read_bytes())
+    bound = path.with_name(path.stem + '-device.img')
+    bound.write_bytes(payload)
     remote = g['TMP'] + '/e5-two-stage-boot.img'
-    g['push'](str(path), remote, 'boot.img')
-    g['su_checked']('写入并校验 B 槽 / writing slot B',
-        f'dd if={remote} of=/dev/block/by-name/boot_b bs=1048576 conv=fsync; '
-        f'[ "$(sha256sum /dev/block/by-name/boot_b | cut -d " " -f1)" = {g["sha256"](str(path))} ]; '
+    g['push'](str(bound), remote, 'boot.img')
+    g['su_checked'](f'写入并校验 {linux.upper()} 槽 / writing slot {linux.upper()}',
+        f'dd if={remote} of=/dev/block/by-name/boot_{linux} bs=1048576 conv=fsync; '
+        f'[ "$(sha256sum /dev/block/by-name/boot_{linux} | cut -d " " -f1)" = {g["sha256"](str(bound))} ]; '
         f'rm -f {remote}', **({'effect': 'boot-image-' + path.name} if g.get('GUI') else {}))
 
 
@@ -139,24 +196,28 @@ def start(g, a, node, part_mib, data_mib, grow, raw_size, apn, ssid, key):
     # Android's wipe including device-specific hooks and metadata setup.
     # Zero BCB only (0..2047, AOSP bootloader_message); the vendor flashing
     # tool's erase-userdata writes the same 0x800 block with the same strings.
-    bcb = g['su_checked']('检查 recovery 请求 / checking recovery request',
+    bcb_hex = g['su_checked']('检查 recovery 请求 / checking recovery request',
         'dd if=/dev/block/by-name/misc bs=1 count=2048 2>/dev/null | od -An -tx1 -v')
-    if any(bytes.fromhex(bcb)):
-        raise ValueError('an existing recovery/OTA message is present; finish it before preparing data')
+    bcb = bytes.fromhex(bcb_hex)
+    bcb_kind = recovery_message_kind(bcb)
+    if bcb_kind == 'bootloader-only' and g['sh']('getprop sys.boot_completed').strip() != '1':
+        raise ValueError('Wait for Android to finish booting before replacing the bootloader request / 请等待 Android 完成启动')
     directory = Path(g['GUI'].backup_base() if g.get('GUI') else g['B']) / 'backups' / ('part-' + time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8])
     directory.mkdir(parents=True)
     path = directory / 'transaction.json'
     bc = g['read_boot_control']()
-    backup(g, '/dev/block/by-name/boot_b', directory / 'boot-b-before.img')
+    android, linux = g['current_slots']()
+    backup(g, '/dev/block/by-name/boot_' + linux, directory / ('boot-' + linux + '-before.img'))
     backup_gpt(g, data, directory)
     (directory / 'boot-control-before.bin').write_bytes(bc)
-    (directory / 'bcb-before.bin').write_bytes(bytes.fromhex(bcb))
+    (directory / 'bcb-before.bin').write_bytes(bcb)
     token = uuid.uuid4().hex
     state = dict(version=2, phase='prepared', token=token, serial=g['adb']('get-serialno').strip(),
         model=g['sh']('getprop ro.product.model').strip(), data=data,
+        android_slot=android, linux_slot=linux,
         target=data_mib * 2048, need=part_mib * 2048, grow=grow,
         boot_sha=g['sha256'](str(files/'boot.img')), image_sha=g['sha256'](str(files/'openwrt.ext4.gz')),
-        raw_size=raw_size, apn=apn, ssid=ssid, key=key)
+        raw_size=raw_size, apn=apn, ssid=ssid, key=key, request_handoff=1)
     # State lives on the PC, including credentials; do not publish backups.
     save(path, state)
     if g.get('GUI'): g['GUI'].saved(path, state)
@@ -172,6 +233,10 @@ def start(g, a, node, part_mib, data_mib, grow, raw_size, apn, ssid, key):
     if g['sha256'](str(directory/'bootchain.tar')) != g['su']('sha256sum /data/local/tmp/e5-chain-backup.tar').split()[0]:
         raise ValueError('boot chain PC backup checksum mismatch')
     flash_boot(g, temporary)
+    if bcb_kind == 'bootloader-only':
+        g['su_checked']('清除已备份的 bootloader 单次请求并回读 / clearing backed-up one-time bootloader request',
+            clear_bootloader_command_script(bcb, bc),
+            **({'effect': 'two-stage-clear-bootloader-command'} if g.get('GUI') else {}))
     g['arm_slot_b']()
     print('\n第一阶段已就绪：重启后重建分区，进入原厂 recovery 清空数据，再回 Android。')
     print('首次开机的离线缩容通常需要数分钟，数据较多或闪存较慢时更久；请保持供电，不要中断。')
@@ -222,6 +287,72 @@ def resume(g, a):
     g['find_adb']()
     g['android_checks']()
     finish(g, a, path, state)
+
+
+def retry_missing_request(g, a, path, state, rows):
+    """Repair an old header-only handoff only when BOTH GPT copies are original.
+
+    This is not a geometry override: a partial carve, a missing backup, or a
+    second unsuccessful boot with the embedded request must stop for inspection.
+    """
+    if (state['phase'] not in ('awaiting-android', 'rearming') or
+            state.get('request_handoff') and state['phase'] != 'rearming' or
+            set(rows) != {'userdata'} or rows['userdata'] != state['data']):
+        raise ValueError('Partition preparation did not complete; keep backups and inspect the device / '
+                         '分区准备未完成，请保留备份并检查设备，不会重复缩容或格式化')
+    directory = path.parent
+    normal = (Path(g['F'])/'boot.img').read_bytes()
+    for name, size in [('boot-'+state['linux_slot']+'-before.img', len(normal)), ('bootchain.tar', None)]:
+        backup_file = directory/name
+        if not backup_file.is_file() or (backup_file.stat().st_size != size if size is not None else not backup_file.stat().st_size):
+            raise ValueError('Original boot backups missing or truncated; preparation not retried')
+    disk = state['data']['node'].split('p')[0]
+    sectors = int(g['su_checked']('复核磁盘容量 / checking disk bounds',
+                                f'cat /sys/class/block/{disk}/size').strip())
+    if sectors <= state['data']['start'] + state['data']['size']:
+        raise ValueError('Invalid disk bounds; preparation not retried')
+    # No new backup replaces the originals. adb pull uses a separate temporary
+    # host directory; full byte equality includes every unrelated GPT entry.
+    with __import__('tempfile').TemporaryDirectory() as work:
+        for name, start, count in [('gpt-primary.bin', 0, 34), ('gpt-backup.bin', sectors-33, 33)]:
+            before = directory/name
+            if not before.is_file() or before.stat().st_size != count*512:
+                raise ValueError('Original GPT backup missing or truncated; preparation not retried')
+            remote = g['TMP'] + '/e5-gpt-recheck'
+            g['su_checked']('复核原始 GPT / verifying original GPT',
+                f'dd if=/dev/block/{disk} of={remote} bs=512 skip={start} count={count}; chmod 644 {remote}')
+            local = Path(work)/name
+            g['adb']('pull', remote, str(local), check=True)
+            digest = g['su'](f'sha256sum {remote}').split()[0]
+            g['su_checked']('清理 GPT 复核文件 / cleanup', f'rm -f {remote}')
+            if (local.stat().st_size != count*512 or g['sha256'](str(local)) != digest or
+                    local.read_bytes() != before.read_bytes()):
+                raise ValueError('GPT differs from original backup; preparation not retried / GPT 与原始备份不符，禁止重新准备')
+    bcb = bytes.fromhex(g['su_checked']('复核 recovery 请求 / checking recovery request',
+        'dd if=/dev/block/by-name/misc bs=1 count=2048 2>/dev/null | od -An -tx1 -v'))
+    if recovery_message_kind(bcb) != 'empty':
+        raise ValueError('Pending bootloader/recovery request; preparation not retried')
+    control = g['read_boot_control']()
+    runpy.run_path(str(Path(__file__).with_name('boot-slots.py')))['validate_control'](control, state['android_slot'])
+    # Backup evidence also has to contain a valid original Android fallback.
+    before_control = (directory/'boot-control-before.bin').read_bytes()
+    runpy.run_path(str(Path(__file__).with_name('boot-slots.py')))['validate_control'](before_control, state['android_slot'])
+    g['install_preflight']()
+    request = ':'.join(map(str, (state['token'], state['data']['cid'], state['data']['node'],
+        state['data']['start'], state['data']['size'], state['target'], state['need'], before_control.hex())))
+    temporary = directory/'boot-prepare-embedded.img'
+    temporary.write_bytes(boot_command(normal, 'e5.part_prepare='+request))
+    state.update(phase='rearming', request_handoff=1)
+    save(path, state)
+    if g.get('GUI'): g['GUI'].saved(path, state)
+    print('原始 GPT 与两份备份一致：修复第一阶段启动请求后重新准备；保留原备份与事务。', flush=True)
+    flash_boot(g, temporary)
+    g['arm_slot_b']()
+    state['phase'] = 'awaiting-android'
+    save(path, state)
+    if g.get('GUI'): g['GUI'].saved(path, state)
+    g['adb']('reboot', check=True)
+    wait_android(g, a, path, state)
 
 
 def installed_settings(g):
@@ -291,6 +422,7 @@ def reinstall(g, a):
     state = dict(version=2, phase='writing', token=uuid.uuid4().hex,
                  serial=g['adb']('get-serialno').strip(),
                  model=g['sh']('getprop ro.product.model').strip(),
+                 android_slot=g['current_slots']()[0], linux_slot=g['current_slots']()[1],
                  data=data, target=data['size'], need=root['size'], grow=int(getattr(a, 'grow_fs', True) is not False),
                  boot_sha=g['sha256'](str(files/'boot.img')),
                  image_sha=g['sha256'](str(files/'openwrt.ext4.gz')),
@@ -319,12 +451,21 @@ def finish(g, a, path, state):
         return
     validate_state(state)
     files = Path(g['F'])
+    android, linux = g['current_slots']()
+    # Old v2 records came from an explicitly A-only installer. They cannot
+    # silently authorize continuing after Android moves to the opposite slot.
+    recorded = state.get('android_slot', 'a')
+    if recorded != android or state.get('linux_slot', 'b') != linux:
+        raise ValueError('Android/Linux slots changed since preparation; installation not resumed')
     if (g['adb']('get-serialno').strip() != state['serial'] or
         g['sh']('getprop ro.product.model').strip() != state['model'] or
         g['sha256'](str(files/'boot.img')) != state['boot_sha'] or
         g['sha256'](str(files/'openwrt.ext4.gz')) != state['image_sha']):
         raise ValueError('wrong device or different installation package')
-    target = verify_geometry(state, probe(g))
+    rows = probe(g)
+    if 'e5root' not in rows and rows.get('userdata') == state['data']:
+        return retry_missing_request(g, a, path, state, rows)
+    target = verify_geometry(state, rows)
     # Android may have updated its boot chain since preparation or the first
     # install. Reinstall/resume needs the same size/BCAB/chain checks as TF.
     g['install_preflight']()

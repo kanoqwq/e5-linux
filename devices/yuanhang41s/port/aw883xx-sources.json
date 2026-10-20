@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/dikeckaan/zte-ums9620-kernel-5.4.254",
+  "commit": "b50db5b6224c11db42a246e8fcdaad1e1d59f478",
+  "files": {
+    "aw883xx.c": "dafcc202f8e5cd75a1636c2bae6df76f66989c243c71c07edc70617839dcc812",
+    "aw883xx.h": "debc8d598589db3e6ed99391b5c942af94dbe04c3fd96fecee6bdae89f30ccdc",
+    "aw883xx_bin_parse.c": "7f15677fd44ea88651c71d7fff55fc9e7ebbfe2a6f9bddaa233ed57ee8787a18",
+    "aw883xx_bin_parse.h": "51b6bb9b9affb851f5951e22c687faf88aab3a1051853fbd3047e6b469a97eed",
+    "aw883xx_calib.c": "9aa147effc5c7988f173097bc62365acbcbe994c3aced0e8fe2ee5aa3f28df38",
+    "aw883xx_calib.h": "74f8a73e69dcfbda9b9893a948261177b204632bb85a9ddc3c4b51a34da7c9d6",
+    "aw883xx_data_type.h": "32e9c20a5d708b96c9dfc3892718b6c965ac57b41708d04895bfb86fae19cc3b",
+    "aw883xx_device.c": "60d091db583edb6d4ff74717acfa1a048c24733ac2ed426e2905f16e6c0cc716",
+    "aw883xx_device.h": "fddce7c281a7d3fed81c1a9aee3a08139611d1ca52307c3645009e4382d92d2e",
+    "aw883xx_init.c": "70c7cf5a1edb3f709162508fc9f7f310f449c5fe7e1914db3b0d5c36c78f1648",
+    "aw883xx_log.h": "2e277974fbb6e86be05dd2766ef72a4544a6d164be919c7b869d4d946dad4530",
+    "aw883xx_monitor.c": "9b2239473c16f3708846ecccbc48e2fe1357b5fd6f74f98aa94c0ccba211d76f",
+    "aw883xx_monitor.h": "29c21e04f5612866373d34382c6e48e87445a5669d21e4f35ea0555e524e71fd",
+    "aw883xx_pid_2049_reg.h": "bdbcdab280810a5a810696cc86dd0dbf2a4563c81eeba61f52b2fc5876ed5cbf",
+    "aw883xx_spin.c": "1fca8da300d15b59cc1ea83485751762186911e2bceb04b73817df0bae6d402b",
+    "aw883xx_spin.h": "4368d92641f477a4747755e8b310fc64fa53d9ce10212a6d241e21ff8280d3eb"
+  }
+}

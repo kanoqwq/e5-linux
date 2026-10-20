@@ -1,5 +1,6 @@
 """Theme contrast and real misc writes against private regular-file fixtures."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -20,6 +21,13 @@ def luminance(color):
 
 
 class Switcher(unittest.TestCase):
+    def test_packaged_apk_matches_current_sources(self):
+        files = [TOP / 'AndroidManifest.xml', *(TOP / 'src').rglob('*.java'), *(TOP / 'res').rglob('*')]
+        sources = {p.relative_to(TOP).as_posix(): hashlib.sha256(p.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+                   for p in sorted(files) if p.is_file()}
+        metadata = json.loads((TOP / 'op-system-switcher.json').read_text(encoding='utf-8'))
+        self.assertEqual(metadata, {'source': sources, 'binary_sha256': hashlib.sha256((TOP / 'op-system-switcher.apk').read_bytes()).hexdigest()})
+
     def test_light_dark_text_and_buttons_have_readable_contrast(self):
         styles = {s.attrib['name']: {i.attrib['name']: i.text for i in s}
                   for s in ET.parse(TOP / 'res/values/styles.xml').getroot()}
@@ -37,7 +45,7 @@ class Switcher(unittest.TestCase):
         source = JAVA.read_text(encoding='utf-8')
         for forbidden in ('mount -', 'umount ', '/e5root', '/boot-os', '/default-boot'):
             self.assertNotIn(forbidden, source)
-        self.assertIn('SLOT=_a', source)
+        self.assertIn('SLOT=_([ab])', source)
         for forbidden in ('boot_b', 'BOOT=', 'loglevel=', '请先安装'):
             self.assertNotIn(forbidden, source)
         self.assertIn('Configuration.UI_MODE_NIGHT_YES', source)

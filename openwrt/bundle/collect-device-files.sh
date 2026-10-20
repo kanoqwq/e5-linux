@@ -15,7 +15,7 @@ umask 022
 OUT=${1:?out} FW=${2:?firmware}
 S=${E5_COLLECT_WORK:-/data/local/tmp/e5-devfiles}
 rm -rf "$S"
-mkdir -p "$S/opt/e5/android" "$S/lib/firmware" || exit 1
+mkdir -p "$S/opt/e5/android" "$S/lib/firmware" "$S/etc/e5" "$S/etc/e5linux" || exit 1
 elf_class=$(od -An -tu1 -j4 -N1 /vendor/bin/modem_control | tr -d ' \n')
 case "$elf_class" in
   1) android_lib=lib; android_linker=linker ;;
@@ -56,7 +56,7 @@ for f in lib/firmware/wcnmodem.bin lib/firmware/l_agdsp_a.img lib/firmware/sprd/
   [ -s "$S/$f" ] || { echo "E5-COLLECT-FAIL no $f"; exit 1; }
 done
 mkdir -p "$(dirname "$OUT")"
-(cd "$S" && tar -cf "$OUT.part" lib opt) || { echo "E5-COLLECT-FAIL tar"; exit 1; }
+(cd "$S" && tar -cf "$OUT.part" lib opt etc) || { echo "E5-COLLECT-FAIL tar"; exit 1; }
 mv "$OUT.part" "$OUT"
 rm -rf "$S" "$FW"
 echo "E5-COLLECT-OK $(ls -l "$OUT" | awk '{print $5}')"

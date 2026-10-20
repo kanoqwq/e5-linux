@@ -1,6 +1,6 @@
 #!/bin/sh
-# Write an e5-linux boot image into boot_b from the running Linux (Debian or
-# OpenWrt, either form) and arm slot b for the next boot -- what
+# Write an e5-linux boot image into the identified Linux slot (Debian or
+# OpenWrt, either form) and arm that slot for the next boot -- what
 # boot/flash-from-linux.sh does over telnet, as one script the flash package
 # (openwrt/make-flash-bundle.sh) runs on the device.
 #
@@ -18,12 +18,28 @@ part() {
         grep -qx "PARTNAME=$1" "$u" 2>/dev/null && { echo "/dev/$(basename "$(dirname "$u")")"; return; }
     done
 }
-BOOTB=$(part boot_b)
-MISC=$(cat /run/e5linux/misc-dev 2>/dev/null || part misc)
 BC_B=/run/e5linux/misc-bc-slot-b-trial.bin
-[ -b "$BOOTB" ] && [ -b "$MISC" ] || { echo "boot_b or misc not found" >&2; exit 1; }
+[ "$(wc -c < "$BC_B" 2>/dev/null)" = 32 ] || {
+    echo 'Incomplete Linux boot control; nothing written' >&2; exit 1;
+}
+case "$(dd if="$BC_B" bs=1 count=2 2>/dev/null)" in
+    _a) linux_slot=a ;; _b) linux_slot=b ;;
+    *) echo 'Linux slot unavailable; nothing written' >&2; exit 1 ;;
+esac
+BC_A=/run/e5linux/misc-bc-slot-a.bin
+case "$linux_slot:$(dd if="$BC_A" bs=1 count=2 2>/dev/null)" in
+    a:_b|b:_a) ;;
+    *) echo 'Android/Linux boot roles conflict; nothing written' >&2; exit 1 ;;
+esac
+declared=$(cat /etc/e5/linux-slot 2>/dev/null || true)
+[ -z "$declared" ] || [ "$declared" = "$linux_slot" ] || {
+    echo 'Linux slot metadata conflicts; nothing written' >&2; exit 1;
+}
+BOOTB=$(part boot_$linux_slot)
+MISC=$(cat /run/e5linux/misc-dev 2>/dev/null || part misc)
+[ -b "$BOOTB" ] && [ -b "$MISC" ] || { echo "Linux boot or misc not found" >&2; exit 1; }
 
-echo "== writing boot_b ($BOOTB)"
+echo "== writing boot_$linux_slot ($BOOTB)"
 T=/tmp/e5-boot-head.img
 case "$URL" in
     http://*|https://*) wget -q -O "$T" "$URL" ;;
@@ -35,7 +51,7 @@ dd if="$T" of="$BOOTB" bs=1M conv=fsync 2>/dev/null
 rm -f "$T"
 sync
 got=$(dd if="$BOOTB" bs=1M count="$MB" 2>/dev/null | sha256sum | cut -d' ' -f1)
-[ "$got" = "$WANT" ] || { echo "boot_b verify failed; slot b not armed" >&2; exit 1; }
+[ "$got" = "$WANT" ] || { echo "Linux boot verify failed; slot not armed" >&2; exit 1; }
 echo "   verified"
 
 # the block the running initramfs recorded: the new image's is the same, for
@@ -43,4 +59,4 @@ echo "   verified"
 [ -f "$BC_B" ] || { echo "no $BC_B" >&2; exit 1; }
 dd if="$BC_B" of="$MISC" bs=1 seek=2048 conv=notrunc 2>/dev/null
 sync
-echo "== slot b armed"
+echo "== slot $linux_slot armed"

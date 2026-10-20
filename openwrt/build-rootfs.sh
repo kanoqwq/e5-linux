@@ -479,6 +479,11 @@ fi
 if [ -f $R/usr/libexec/unisoc-modem/disable-channel-analysis ]; then
     ucode $R/usr/libexec/unisoc-modem/disable-channel-analysis $R
 fi
+mkdir -p $R/usr/libexec/unisoc-modem
+cp /in/feature-source/openwrt/luci-app-t551m/root/usr/libexec/unisoc-modem/disable-stock-upgrade $R/usr/libexec/unisoc-modem/disable-stock-upgrade
+chmod 0755 $R/usr/libexec/unisoc-modem/disable-stock-upgrade
+ucode $R/usr/libexec/unisoc-modem/disable-stock-upgrade $R
+python3 /in/feature-source/installer/stage-ota.py --root $R
 cd $R && tar -czf /out/$NAME .
 ls -la /out/$NAME
 '

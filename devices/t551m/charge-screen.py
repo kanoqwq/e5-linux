@@ -59,6 +59,45 @@ class Artwork:
         self.archive.close()
 
 
+class Framebuffer:
+    """Fit the shared artwork without changing its aspect ratio or pixel format."""
+    def __init__(self, var, stride):
+        width,height,virtual_width,virtual_height,xoffset,yoffset,bpp = struct.unpack_from('@7I',var)
+        if (bpp!=32 or xoffset or not 320<=width<=4096 or not 480<=height<=4096
+                or not width<=virtual_width<=4096
+                or not height+yoffset<=virtual_height<=4096):
+            raise RuntimeError('unsupported charging framebuffer geometry')
+        if struct.unpack_from('@9I',var,32)!=(16,8,0,8,8,0,0,8,0):
+            raise RuntimeError('unsupported charging framebuffer pixel format')
+        if stride<virtual_width*4 or stride%4 or stride*virtual_height>64*1024*1024:
+            raise RuntimeError('unsupported charging framebuffer stride')
+        self.stride=stride;self.height=height;self.offset=yoffset*stride
+        self.scale=min(width//320,height//480)
+        self.left=(width-320*self.scale)//2
+        self.top=(height-480*self.scale)//2
+        self.native=(width,height,stride)==(320,480,1280)
+        self.canvas=None if self.native else bytearray(stride*height)
+
+    def frame(self, source):
+        if len(source)!=320*480*4:
+            raise ValueError('invalid charging artwork size')
+        if self.native:return source
+        scale=self.scale
+        row=bytearray(320*4*scale)
+        for y in range(480):
+            src=source[y*1280:(y+1)*1280]
+            # Expand channels with C-level slice copies, not per-pixel Python
+            # loops. Keep the padded/letterboxed area black on larger panels.
+            for copy in range(scale):
+                for channel in range(4):
+                    row[copy*4+channel::4*scale]=src[channel::4]
+            start=(self.top+y*scale)*self.stride+self.left*4
+            for copy in range(scale):
+                at=start+copy*self.stride
+                self.canvas[at:at+len(row)]=row
+        return self.canvas
+
+
 class Display:
     def __init__(self, backlights):
         self.fd=None;self.tty=None;self.mode=None;self.art=None
@@ -68,13 +107,8 @@ class Display:
         try:
             self.fd=os.open('/dev/fb0',os.O_RDWR|os.O_CLOEXEC)
             var=bytearray(160);fcntl.ioctl(self.fd,0x4600,var)
-            values=struct.unpack_from('@10I',var)
-            if values[:6]!=(320,480,320,480,0,0) or values[6]!=32:
-                raise RuntimeError('unsupported charging framebuffer geometry')
-            if struct.unpack_from('@9I',var,32)!=(16,8,0,8,8,0,0,8,0):
-                raise RuntimeError('unsupported charging framebuffer pixel format')
-            if (SYS/'class/graphics/fb0/stride').read_text().strip()!='1280':
-                raise RuntimeError('unsupported charging framebuffer stride')
+            stride=int((SYS/'class/graphics/fb0/stride').read_text())
+            self.framebuffer=Framebuffer(var,stride)
             lang=subprocess.run(['uci','-q','get','e5-infoscreen.main.lang'],
                                 capture_output=True,text=True,timeout=3).stdout.strip() or 'zh'
             self.art=Artwork(language=lang)
@@ -108,8 +142,8 @@ class Display:
             except (OSError,ValueError):
                 self.status='Unknown'
             self.next_status=now+2
-        frame=self.art.frame(self.capacity,self.status,self.phase)
-        if os.pwrite(self.fd,frame,0)!=len(frame):
+        frame=self.framebuffer.frame(self.art.frame(self.capacity,self.status,self.phase))
+        if os.pwrite(self.fd,frame,self.framebuffer.offset)!=len(frame):
             raise OSError('incomplete charging frame')
         if not self.lit:self.light(150)
         self.phase+=1;self.next_frame=now+.125

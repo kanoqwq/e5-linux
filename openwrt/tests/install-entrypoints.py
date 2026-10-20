@@ -39,7 +39,7 @@ class Entrypoints(unittest.TestCase):
 
     def source(self, path):
         path.mkdir()
-        for name in ('flash.py', 'flash.cmd', 'flash.sh', 'part-two-stage.py', 'userdata-image.sh', 'android-loop.sh',
+        for name in ('flash.py', 'flash.cmd', 'flash.sh', 'part-two-stage.py', 'boot-slots.py', 'userdata-image.sh', 'android-loop.sh',
                      'README.md', 'README.zh-CN.md', 'START-HERE.md'):
             shutil.copy2(TOP / 'openwrt/bundle' / name, path / name)
 

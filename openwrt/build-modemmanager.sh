@@ -68,12 +68,15 @@ set -euo pipefail
 # 34: keep the logical modem enabled for the other SIM's voice/SMS when the
 # data radio is off, without powering that disabled data radio back on.
 # 35: vendor SFUN RF control and distinguish RF-off from cold SIM power-up.
-E5REV=35
+# 36: accept the recipient's extended ECIND readiness after insertion/SIM busy.
+# 37: retain Unisoc call identity after a failed/ambiguous accept result.
+E5REV=37
 VER=${E5_WRT_VER:-25.12.5}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TOP="$(cd "$HERE/.." && pwd)"
 WORK="$TOP/work/openwrt"
 OUT="$TOP/out/openwrt"
+BUILD_VOLUME=${E5_MODEM_BUILD_VOLUME:-e5-openwrt-src}
 URL=https://downloads.openwrt.org/releases/$VER/targets/armsr/armv8
 mkdir -p "$WORK" "$OUT"
 
@@ -89,6 +92,7 @@ cp "$HERE/tests/sim-events.py" "$WORK/sim-events.py"
 cp "$HERE/tests/voice-urc.py" "$WORK/voice-urc.py"
 cp "$HERE/tests/voice-recovery.py" "$WORK/voice-recovery.py"
 cp "$HERE/tests/voice-hangup.py" "$WORK/voice-hangup.py"
+cp "$HERE/tests/voice-accept.py" "$WORK/voice-accept.py"
 cp "$HERE/tests/data-priority-hook.py" "$WORK/data-priority-hook.py"
 cp "$HERE/tests/modem-mobility.py" "$WORK/modem-mobility.py"
 cp "$HERE/tests/sms-isolation.py" "$WORK/sms-isolation.py"
@@ -116,7 +120,7 @@ cp "$HERE"/patches/modemmanager-package-*.patch "$WORK/patches/pkg/"
 DOCKER=${E5_DOCKER:-docker}
 case "$(uname -m)" in x86_64) PLAT=linux/amd64;; *) PLAT=linux/arm64;; esac
 Z=; [ "$DOCKER" = podman ] && Z=,z
-$DOCKER run --rm --platform $PLAT -v e5-openwrt-src:/build \
+$DOCKER run --rm --platform $PLAT -v "$BUILD_VOLUME":/build \
     -v "$WORK":/work:ro$Z -v "$OUT":/out${Z:+:z} -e VER="$VER" -e E5REV="$E5REV" \
     -e JOBS="${E5_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc)}" \
     "${E5_MODEM_BUILD_IMAGE:-debian:trixie}" bash -euc '
@@ -202,6 +206,7 @@ python3 /work/sim-events.py "$(dirname "$voice_source")"
 python3 /work/voice-urc.py "$(dirname "$voice_source")"
 python3 /work/voice-recovery.py "$(dirname "$voice_source")"
 python3 /work/voice-hangup.py "$(dirname "$voice_source")"
+python3 /work/voice-accept.py "$(dirname "$voice_source")"
 python3 /work/data-priority-hook.py "$(dirname "$voice_source")"
 python3 /work/modem-mobility.py "$(dirname "$voice_source")" /work/modemmanager-unisoc-renew
 python3 /work/sms-isolation.py "$(dirname "$voice_source")"

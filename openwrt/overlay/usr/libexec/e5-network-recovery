@@ -4,6 +4,8 @@
 The Android data controller reacts to PS registration/RAT changes separately
 from setup-error timers. Read ModemManager's cached D-Bus state and ask netifd
 to resume an enabled, idle WAN. Never issue AT commands or cycle the radio.
+Also release a startup NO_DEVICE failure when the logical modem becomes ready;
+its first network registration is part of setup, not a prerequisite to setup.
 """
 import json
 import logging
@@ -51,7 +53,25 @@ def radio_key(modem):
             ps.get('registration-state'), ps.get('operator-code'), rats)
 
 
-def can_resume(interface):
+def ready_key(modem):
+    """A newly exported modem can release an early NO_DEVICE setup failure.
+
+    Registration is performed by the normal protocol setup. Requiring packet
+    attachment here would deadlock initial setup against its own prerequisite.
+    Do not release PIN, missing-SIM, initializing or explicit user failures.
+    """
+    generic = modem.get('generic', {})
+    if generic.get('device') != 'unisoc-sipc' or generic.get('plugin') != 'unisoc':
+        return None
+    if generic.get('state') not in ('disabled', 'enabled', 'searching', 'registered',
+                                    'connecting', 'connected', 'disconnecting'):
+        return None
+    if generic.get('sim') in (None, '', '--', '/'):
+        return None
+    return ('modem-ready', modem.get('dbus-path'), generic.get('primary-sim-slot'))
+
+
+def can_resume(interface, packet_ready=True):
     if interface.get('proto') != 'modemmanager':
         return False
     if not interface.get('autostart'):
@@ -61,6 +81,10 @@ def can_resume(interface):
     if interface.get('up') or interface.get('pending'):
         return False
     errors = [e.get('code', '') for e in interface.get('errors', [])]
+    if errors == ['NO_DEVICE']:
+        return True
+    if not packet_ready:
+        return False
     # Existing PIN, SIM, APN and explicit mode errors still need user action.
     return all(e in ('MM_CONNECT_FAILED', 'MM_3GPP_OPERATOR_REGISTRATION_FAILED',
                      'MM_INTERFACE_RESTART', 'MM_FAILED_REASON_SIM_MISSING') for e in errors)
@@ -108,7 +132,8 @@ class Recovery:
             self.attempted.clear()
             return
         modem = query(['mmcli', '-m', 'unisoc-sipc', '-J'])['modem']
-        key = radio_key(modem)
+        packet_key = radio_key(modem)
+        key = packet_key or ready_key(modem)
         if key != self.key:
             self.key = key
             self.attempted.clear()
@@ -122,7 +147,7 @@ class Recovery:
             if status.get('up'):
                 self.attempted.discard(name)
                 continue
-            if name in self.attempted or not can_resume(status):
+            if name in self.attempted or not can_resume(status, packet_key is not None):
                 continue
             config = subprocess.run(['uci', '-q', 'get', 'network.' + name + '.device'],
                                     capture_output=True, text=True, timeout=3)
@@ -136,7 +161,8 @@ class Recovery:
                        '{"action":5,"available":true}']
             subprocess.run(command,
                            capture_output=True, timeout=10, check=True)
-            logging.info('%s: packet registration available; resuming data setup', name)
+            logging.info('%s: %s; resuming data setup', name,
+                         'packet registration available' if packet_key else 'modem now available')
 
 
 def main():

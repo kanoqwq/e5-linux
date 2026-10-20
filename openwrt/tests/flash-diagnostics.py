@@ -21,6 +21,9 @@ spec.loader.exec_module(flash)
 
 
 class Diagnostics(unittest.TestCase):
+    def setUp(self):
+        roles = patch.multiple(flash, ANDROID_SLOT='a', LINUX_SLOT='b')
+        roles.start(); self.addCleanup(roles.stop)
     def test_userdata_verification_uploads_loop_helper_before_running_worker(self):
         with patch.object(flash,'push') as push,patch.object(flash,'su_checked') as execute:
             flash.stage_userdata_image(2 << 30, 10 << 30)
@@ -78,6 +81,8 @@ class Diagnostics(unittest.TestCase):
                 Path(directory, 'device-profile.json').write_text(json.dumps({
                     'profile': profile, 'android_models': [model]}))
                 def shell(command):
+                    if command == 'id -u':
+                        return '2000'
                     if command.endswith(' -c id'):
                         return 'uid=0(root)'
                     self.assertEqual(command, 'getprop ro.product.model')
@@ -259,6 +264,7 @@ class Diagnostics(unittest.TestCase):
                 'gz_metadata': lambda path: (4 << 20, 'rawsha'),
                 'su_checked': checked, 'pull_device_files': firmware,
                 'push': lambda local, remote, label: record('push', label),
+                'push_boot': lambda work, remote: (record('push', 'boot.img') or {'sha256':'abc'}),
                 'unmount_android_sd': lambda sd: record('release', sd),
                 'bootchain': lambda mode: record('chain', mode),
                 'arm_slot_b': lambda: record('arm'),

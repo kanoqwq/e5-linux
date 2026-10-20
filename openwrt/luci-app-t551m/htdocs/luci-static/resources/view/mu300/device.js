@@ -71,6 +71,11 @@ return view.extend({
 		var s = this.state || {};
 		this.q('role-now').textContent = M.translate(s.role === 'host' ? '主机模式' : s.role === 'device' ? '设备模式' : '未连接');
 		this.q('role').querySelector('option[value="host"]').disabled = s.host_supported === 0;
+		var external = this.q('role').querySelector('option[value="host-sink"]');
+		if (s.role_supported?.includes('host-sink') && !external) {
+			external = document.createElement('option'); external.value = 'host-sink';
+			external.textContent = M.translate('主机＋外部供电（实验）'); this.q('role').appendChild(external);
+		} else if (!s.role_supported?.includes('host-sink') && external) external.remove();
 		this.q('role').value = s.policy || 'auto';
 		this.q('role-auto').checked = !!s.role_auto;
 		this.q('lan-auto').checked = !!s.lan_auto;
@@ -89,6 +94,7 @@ return view.extend({
 		var host = this.state.role === 'host', hostAuto = this.q('role-auto').checked && this.q('role').value === 'host';
 		this.q('role-auto').disabled = this.q('role').value !== 'host';
 		if (this.q('role').value !== 'host') this.q('role-auto').checked = false;
+		this.q('role-note').textContent = M.translate(this.state.last_error || (this.q('role').value === 'host-sink' ? '关闭本机 OTG 供电，保持数据主机并尝试从扩展坞充电。不进行 PD 协商；需要扩展坞提供上游 5V。重启恢复自动模式。' : this.state.host_supported === 0 ? '当前内核支持自动识别，但未提供手动角色切换接口。' : '自动模式根据连接设备选择充电或 OTG；手动主机模式会断开本端口的 USB 网络与串口。未勾选开机自动启用时，重启恢复自动模式。'));
 		this.q('role-apply').disabled = this.state.host_supported === 0;
 		var locked = this.state.net_available === 0;
 		[ 'net-mode', 'net-scope', 'net-auto', 'net-apply' ].forEach(function(id) { this.q(id).disabled = locked; }, this);
@@ -103,7 +109,7 @@ return view.extend({
 		this.q('net-scope').addEventListener('change', function() { self.q('net-auto').checked = true; });
 		this.q('role-apply').addEventListener('click', function() {
 			var role = self.q('role').value, auto = self.q('role-auto').checked ? '1' : '0';
-			var warning = role === 'host' ? '切换主机模式会断开本端口的 USB 管理连接，请通过 Wi-Fi 管理。插入 OTG 外设后才会开启供电。' : role === 'auto' ? '恢复自动识别充电器、电脑和 OTG 外设，当前 USB 连接可能重新枚举。' : '切回设备模式后 USB 网络和串口会重新枚举。';
+			var warning = role === 'host-sink' ? '仅用于独立供电扩展坞：本机停止向外供电，USB 管理连接会中断。不支持该接法的扩展坞可能无法枚举或充电。' : role === 'host' ? '切换主机模式会断开本端口的 USB 管理连接，请通过 Wi-Fi 管理。插入 OTG 外设后才会开启供电。' : role === 'auto' ? '恢复自动识别充电器、电脑和 OTG 外设，当前 USB 连接可能重新枚举。' : '切回设备模式后 USB 网络和串口会重新枚举。';
 			M.confirmBox('确认切换 USB 角色？', warning, { danger: role === 'host', okText: '应用' }).then(function(yes) {
 				if (!yes) return;
 				var btn = self.q('role-apply'); M.busy(btn, true);

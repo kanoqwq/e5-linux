@@ -1,0 +1,37 @@
+--- a/drivers/power/supply/charger-manager.c
++++ b/drivers/power/supply/charger-manager.c
+@@ -4572,8 +4572,9 @@
+ 	jeita_info->temp_up_trigger = 0;
+ 	jeita_info->temp_down_trigger = 0;
+ 	jeita_info->jeita_changed = true;
+-	jeita_info->jeita_status = 4;
+-	jeita_info->jeita_temperature = 250;
++	/* Stock E5 CM 0x2e3c: start below the table, not in overheat. */
++	jeita_info->jeita_status = 0;
++	jeita_info->jeita_temperature = -200;
+ }
+ 
+ static int cm_manager_get_jeita_status(struct charger_manager *cm, int cur_temp)
+@@ -4612,20 +4613,12 @@
+ 
+ 	recovery_temp_status = i + 1;
+ 
+-	/*
+-	 * A fresh start (probe, a plug-in): the zone the temperature is in.  The
+-	 * hysteresis below starts from the initial status 4 -- the top zone, which
+-	 * stops charging as "overheat" -- and a temperature above the initial
+-	 * reference (25.0 C) only ever lets it go up, so a battery warmer than that
+-	 * stayed "overheat", Not charging, until it cooled below the temperature
+-	 * of that start.
+-	 */
+ 	if (jeita_info->jeita_changed) {
+ 		jeita_info_init(&desc->jeita_info);
+ 		dev_info(cm->dev, "%s: jeita_changed= %d\n", __func__,
+ 			 jeita_info->jeita_changed);
+-		jeita_status = temp_status;
+-		goto out;
++		/* Continue through the stock hysteresis with the reset state. */
++		jeita_status = jeita_info->jeita_status;
+ 	}
+ 
+ 	/* temperature goes down */
