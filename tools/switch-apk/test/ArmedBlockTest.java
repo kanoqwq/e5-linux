@@ -31,6 +31,18 @@ public class ArmedBlockTest {
         byte[] back = ArmedBlock.armed(unhex(ARMED_B), 'a');
         check("back to slot a", STOCK, ArmedBlock.hex(back));
 
+        // Mirror the healthy Android layout. Physical B is Android here;
+        // choosing OpenWrt must arm A and preserve B's successful bit.
+        byte[] stockB = ArmedBlock.armed(stock, 'b', 'a');
+        stockB[12] = (byte)0x1e; stockB[14] = (byte)0x9f;
+        stockB[16] = 0x57;
+        java.util.zip.CRC32 sum = new java.util.zip.CRC32(); sum.update(stockB,0,28);
+        for (int i=0;i<4;i++) stockB[28+i]=(byte)(sum.getValue() >>> (8*i));
+        byte[] linuxA=ArmedBlock.armed(stockB,'a','b');
+        if (linuxA[1]!='a' || (linuxA[12]&255)!=0x2f || (linuxA[14]&255)!=0x9e || linuxA[16]!=0x57)
+            throw new AssertionError("Android B / Linux A roles or opaque bytes changed");
+        check("back to Android B",ArmedBlock.hex(stockB),ArmedBlock.hex(ArmedBlock.armed(linuxA,'b','b')));
+
         // The octal form the device's printf '%b' receives has to decode to the
         // same 32 bytes.
         String escapes = ArmedBlock.octalEscapes(armed);

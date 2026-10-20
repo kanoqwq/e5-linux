@@ -28,7 +28,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        ask('b');
+        ask(true);
     }
 
     /** Every dialog is built with a dialog theme: the activity's own is translucent. */
@@ -42,16 +42,15 @@ public class MainActivity extends Activity {
                 .create();
     }
 
-    private void ask(final char slot) {
-        final boolean linux = slot == 'b';
+    private void ask(final boolean linux) {
         AlertDialog dialog = window(linux ? "启动 OpenWrt？" : "启动 Android？",
                 "仅切换下次启动，不改默认设置。");
-        android.util.Log.i(TAG, "ask slot=" + slot);
+        android.util.Log.i(TAG, "ask linux=" + linux);
         dialog.setButton(DialogInterface.BUTTON_NEUTRAL, linux ? "Android" : "OpenWrt",
-                (d, w) -> ask(linux ? 'a' : 'b'));
+                (d, w) -> ask(!linux));
         dialog.setButton(DialogInterface.BUTTON_NEGATIVE, "取消", (d, w) -> finish());
         dialog.setButton(DialogInterface.BUTTON_POSITIVE,
-                "切换", (d, w) -> apply(slot));
+                "切换", (d, w) -> apply(linux));
         dialog.setOnCancelListener(d -> finish());
         dialog.show();
     }
@@ -74,7 +73,7 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------- the work
 
-    private void apply(final char slot) {
+    private void apply(final boolean linux) {
         busy = true;
         final AlertDialog progress = window("正在切换", "请稍候…");
         progress.setCancelable(false);
@@ -93,10 +92,13 @@ public class MainActivity extends Activity {
                 if (!found.find()) {
                     throw new IllegalStateException("读不到 misc 的启动控制块：\n" + read.trim());
                 }
-                if (!read.contains("SLOT=_a\n")) {
-                    throw new IllegalStateException("当前不是 Android A 槽，停止切换。");
+                Matcher active = Pattern.compile("(?m)^SLOT=_([ab])$").matcher(read);
+                if (!active.find()) {
+                    throw new IllegalStateException("无法识别当前 Android 槽位，停止切换。");
                 }
-                byte[] wanted = ArmedBlock.armed(unhex(found.group(1)), slot);
+                char androidSlot = active.group(1).charAt(0);
+                char slot = linux ? (androidSlot == 'a' ? 'b' : 'a') : androidSlot;
+                byte[] wanted = ArmedBlock.armed(unhex(found.group(1)), slot, androidSlot);
                 // Only misc is changed. Root selection and persistent defaults
                 // belong to the running OpenWrt, never an Android mount.
                 String written = su("set -e; BY=/dev/block/by-name; "
@@ -114,7 +116,7 @@ public class MainActivity extends Activity {
                     android.util.Log.e(TAG, "misc verification mismatch: " + written.trim());
                     throw new IllegalStateException("启动设置校验失败，请勿重启。");
                 }
-                final String title = "已选择 " + (slot == 'b' ? "OpenWrt" : "Android");
+                final String title = "已选择 " + (linux ? "OpenWrt" : "Android");
                 runOnUiThread(() -> {
                     progress.dismiss();
                     report(title, "现在重启？", true);

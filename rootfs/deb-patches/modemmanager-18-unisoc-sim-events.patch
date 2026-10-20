@@ -25,7 +25,7 @@ Forwarded: no
  
  G_DEFINE_TYPE_EXTENDED (MMBroadbandModemUnisoc, mm_broadband_modem_unisoc, MM_TYPE_BROADBAND_MODEM, 0,
                          G_ADD_PRIVATE (MMBroadbandModemUnisoc)
-@@ -1268,6 +1272,171 @@
+@@ -1268,6 +1272,181 @@
      }
  }
  
@@ -43,6 +43,16 @@ Forwarded: no
 +    if (*p == ',') {
 +        p++;
 +        if (!power_parse_uint (&p, &cause))
++            return FALSE;
++    }
++    /* The recipient reports readiness as 3,0,0,1 after SIM busy. Stock
++     * onSimStatusChanged uses type/value/cause and ignores trailing fields.
++     * Validate that metadata, but never treat it as a slot or card state:
++     * the selected owner's CPIN query remains authoritative. */
++    while (*p == ',') {
++        guint metadata;
++        p++;
++        if (!power_parse_uint (&p, &metadata))
 +            return FALSE;
 +    }
 +    if (*p)
@@ -197,7 +207,7 @@ Forwarded: no
  static void
  setup_ports (MMBroadbandModem *self)
  {
-@@ -1277,6 +1446,7 @@
+@@ -1277,6 +1456,7 @@
      g_autoptr(GRegex) vendor = NULL;
      g_autoptr(GRegex) call = NULL;
      g_autoptr(GRegex) sppcodata = NULL;
@@ -205,7 +215,7 @@ Forwarded: no
  
      MM_BROADBAND_MODEM_CLASS (mm_broadband_modem_unisoc_parent_class)->setup_ports (self);
  
-@@ -1315,6 +1485,10 @@
+@@ -1315,6 +1495,10 @@
      /* Added last so this specific handler runs before the broad vendor sink. */
      mm_port_serial_at_add_unsolicited_msg_handler (primary, sppcodata,
                                                     sppcodata_received, self, NULL);
@@ -216,7 +226,7 @@ Forwarded: no
  }
  
  /*****************************************************************************/
-@@ -1863,7 +2037,6 @@
+@@ -1863,7 +2047,6 @@
  /* E5 card-addressed PDU submit through the existing single AT port owner.
   * Modem.Command's normal authorization applies. The PDU is queued raw
   * immediately after the prompt, as in mm-base-sms, without SPSWDATA. */
@@ -224,7 +234,7 @@ Forwarded: no
  
  /* A foreign CMTI index has no slot identifier. CNMI on this CP can route
   * SIM2 indications to SIM1's command/URC ring. The shared receive worker
-@@ -2138,6 +2311,9 @@
+@@ -2138,6 +2321,9 @@
      iface->load_signal_quality_finish = modem_load_signal_quality_finish;
      iface->get_cell_info = modem_get_cell_info;
      iface->get_cell_info_finish = modem_get_cell_info_finish;

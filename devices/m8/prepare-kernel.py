@@ -12,9 +12,11 @@ BASE = '020b970e351e'
 HERE = Path(__file__).resolve().parent
 
 
-def apply(kernel):
+def apply(kernel, *, charger_adapter=None, recipient='m8'):
     kernel = Path(kernel)
-    head = subprocess.check_output(['git', '-C', str(kernel), 'rev-parse', 'HEAD'], text=True).strip()
+    if recipient != 'yuanhang41s' and (kernel / 'drivers/usb/typec/yh41s-usb-policy.h').exists():
+        raise ValueError('41S-specific USB source cannot be reused for another board; use its clean platform source')
+    head = subprocess.check_output(['git', '-c', 'safe.directory='+str(kernel.resolve()), '-C', str(kernel), 'rev-parse', 'HEAD'], text=True).strip()
     if not head.startswith(BASE):
         raise ValueError('Expected linux-lts-e5 ' + BASE)
     runpy.run_path(str(HERE.parent / 'common/display.py'))['apply'](kernel)
@@ -82,6 +84,7 @@ def apply(kernel):
     text = text.replace('SPRD_SC_COMP_CLK_DATA(', 'SPRD_COMP_CLK_DATA(')
     path.write_text(text)
     # The shared 6.18 reset provider protects RMW with a lock, unlike the donor.
+    runpy.run_path(str(HERE / 'clock-isolation.py'))['apply'](kernel)
     replace('drivers/clk/sprd/ums9620-clk.c',
             '\t\treset->rcdev.of_node = pdev->dev.of_node;',
             '\t\tspin_lock_init(&reset->lock);\n\t\treset->rcdev.of_node = pdev->dev.of_node;')
@@ -126,7 +129,7 @@ def apply(kernel):
             '\t{ .compatible = "sprd,ums9620-pwm", .data = &ums9620_pwm_data },',
             '\t{ .compatible = "sprd,ums9620-pwm", .data = &ums9620_pwm_data },\n'
             '\t{ .compatible = "sprd,qogirn6pro-pwm", .data = &ums9620_pwm_data },')
-    runpy.run_path(str(HERE / 'charger.py'))['apply'](kernel)
+    (charger_adapter or runpy.run_path(str(HERE / 'charger.py'))['apply'])(kernel)
     runpy.run_path(str(HERE.parent / 't551m/cpufreq.py'))['apply'](kernel)
     # M8 uses the older three-cluster cpufreq-data-v1 binding, like UMS9620.
     for name in ('sprd-cpufreq-v2-driver.c', 'sprd-cpufreq-v2.h'):
@@ -163,6 +166,10 @@ def apply(kernel):
         path.write_text(text.replace(anchor, replacement, 2))
     runpy.run_path(str(HERE / 'usb.py'))['apply'](kernel)
     runpy.run_path(str(HERE / 'usb-role.py'))['apply'](kernel)
+    # 41S supplies its own TCPM/board policy later. The legacy UMP9620 M8/K1
+    # topology uses CC negotiation and the existing DWC3 automatic worker.
+    if recipient != 'yuanhang41s':
+        runpy.run_path(str(HERE / 'typec-policy.py'))['apply'](kernel)
     runpy.run_path(str(HERE / 'audio.py'))['apply'](kernel)
     runpy.run_path(str(HERE / 'gpu.py'))['apply'](kernel)
     runpy.run_path(str(HERE.parent / 't551m/wifi.py'))['apply'](kernel)

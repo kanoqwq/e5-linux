@@ -1,16 +1,28 @@
 #!/bin/sh
-# E5: sysupgrade takes firmware images, and there is no OpenWrt firmware for
-# this device -- an armsr image is a whole-disk image with a kernel of its own,
-# and written to the eMMC it would destroy the partition table, Android and the
-# bootloaders.  This OpenWrt is a root image on userdata or a directory of
-# the Debian root image; it is rebuilt and reinstalled from the host
-# (openwrt/build-rootfs.sh, install-standalone.sh or install.sh).
-# Configuration backups still go through OpenWrt's sysupgrade.
-for a in "$@"; do
-	case "$a" in
-		-b|--create-backup|-l|--list-backup) exec /sbin/sysupgrade.openwrt "$@" ;;
-	esac
-done
-echo "sysupgrade is disabled on the E5: a firmware image would overwrite the eMMC." >&2
-echo "Update packages with 'apk upgrade', or rebuild and reinstall from the host (openwrt/install-standalone.sh)." >&2
+# Firmware replacement uses the project updater. Keep only configuration tools.
+backup_operation() {
+    mode=
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -b|--create-backup|-r|--restore-backup)
+                [ -z "$mode" ] && [ "$#" -ge 2 ] && [ -n "$2" ] || return 1
+                mode=$1
+                shift 2
+                ;;
+            -l|--list-backup)
+                [ -z "$mode" ] || return 1
+                mode=$1
+                shift
+                ;;
+            -k|-u|-c|-o|-p|-v|-q) shift ;;
+            *) return 1 ;;
+        esac
+    done
+    [ -n "$mode" ]
+}
+if backup_operation "$@"; then
+    exec /sbin/sysupgrade.openwrt "$@"
+fi
+echo "Stock firmware flashing is disabled; use the project OTA or desktop updater." >&2
+echo "Configuration backup, restore and listing remain available." >&2
 exit 1

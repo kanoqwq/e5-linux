@@ -187,7 +187,7 @@ m_act() {
         radio)      # Submission is fast; return the actual shared RF job.
             case "$arg" in on|off) "$DASH/action" radio "$arg" ;; *) printf '{"ok":0,"error":"Invalid radio request"}\n';; esac
             ;;
-        modem-reset|reboot|vpn)
+        modem-reset|reboot|poweroff|vpn)
             setsid "$DASH/action" "$op" "$arg" >/dev/null 2>&1 &
             printf '{"ok":1,"started":1,"op":"%s"}\n' "$op$arg"
             ;;

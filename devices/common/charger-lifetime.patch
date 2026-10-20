@@ -1,0 +1,12 @@
+--- a/drivers/power/supply/charger-manager.c
++++ b/drivers/power/supply/charger-manager.c
+@@ -8695,7 +8695,8 @@
+ 	cancel_delayed_work_sync(&cm->fullbatt_vchk_work);
+ 	cancel_delayed_work_sync(&cm->uvlo_work);
+ 
+-	power_supply_unregister(cm->charger_psy);
++	/* charger_psy is devm-managed: devres unregisters it after remove.
++	 * Keep it alive while disabling charging and never unregister twice. */
+ 
+ 	try_charger_enable(cm, false);
+ }

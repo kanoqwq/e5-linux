@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# Android A -> Linux B boot-chain synchronization. Adapted from mu300-linux's
-# tools/android-bootchain.sh; retain this repository's A/B boot contract.
+# Synchronize the running Android slot to the opposite Linux slot.
+# Never infer physical A/B roles from the model or historical filenames.
 # check is read-only; sync backs up BOTH copies before any partition write.
 # Never source this script: its lock and rollback traps must own their process.
 set -u
@@ -40,30 +40,29 @@ check_misc() {
         i=$((i + 1))
     done
     [ $(((crc ^ 4294967295) & 4294967295)) = "$stored" ] || return 1
-    [ $((am & 128)) = 128 ] && [ $((am & 15)) -gt 0 ] || return 1
-    # A higher-priority B could be a pending Android OTA. Do not consume its
-    # fallback chain, even if A can currently run.
-    [ $((bm & 15)) -le $((am & 15)) ] || return 1
+    if [ "$src" = a ]; then current=$am; opposite=$bm; else current=$bm; opposite=$am; fi
+    [ $((current & 128)) = 128 ] && [ $((current & 15)) -gt 1 ] || return 1
+    [ $((opposite & 15)) -le $((current & 15)) ] || return 1
 }
 
 settle() { sync && blockdev --flushbufs "$1"; }
 put() {
     allowed "$1" || return 1
-    [ "$(getprop ro.boot.slot_suffix)" = _a ] || return 1
-    [ "$(readlink -f "$BY/${1}_b")" = "$(cat "$backup/${1}_b.path")" ] || return 1
-    dd if="$2" of="$BY/${1}_b" bs=1048576 conv=fsync,notrunc || return 1
-    settle "$BY/${1}_b"
+    [ "$(getprop ro.boot.slot_suffix)" = "_$src" ] || return 1
+    [ "$(readlink -f "$BY/${1}_$dst")" = "$(cat "$backup/${1}_$dst.path")" ] || return 1
+    dd if="$2" of="$BY/${1}_$dst" bs=1048576 conv=fsync,notrunc || return 1
+    settle "$BY/${1}_$dst"
 }
 rollback() {
     bad=
     for part in $changed; do
-        expected=$(cat "$backup/${part}_b.sha256")
-        if put "$part" "$backup/${part}_b.img" && [ "$(sha "$BY/${part}_b")" = "$expected" ]; then
-            echo "boot chain: restored ${part}_b"
+        expected=$(cat "$backup/${part}_$dst.sha256")
+        if put "$part" "$backup/${part}_$dst.img" && [ "$(sha "$BY/${part}_$dst")" = "$expected" ]; then
+            echo "boot chain: restored ${part}_$dst"
         else bad="$bad $part"; fi
     done
     [ -z "$bad" ] || { echo "BOOTCHAIN-FAILED: restore failed:$bad; DO NOT boot Linux; backups: $backup" >&2; return 1; }
-    echo "boot chain: previous B chain restored and verified; backups: $backup"
+    echo "boot chain: previous Linux chain restored and verified; backups: $backup"
 }
 cleanup() {
     rc=$?
@@ -78,16 +77,22 @@ case ${1:-} in check|sync) mode=$1 ;; *) fail 'usage: android-bootchain.sh check
 [ "$#" = 1 ] || fail 'unexpected arguments'
 [ "$(id -u)" = 0 ] || fail 'root required'
 command -v getprop >/dev/null 2>&1 || fail 'run from Android only'
-[ "$(getprop ro.boot.slot_suffix)" = _a ] || fail 'this boot/runtime supports Android A and Linux B only'
-# This engineering T512N accepts our verified B-slot images while reporting
-# green/locked. Keep the unlocked requirement for the existing production boards.
-if [ "$(getprop ro.product.model)" != T512N ]; then
-    [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'unlocked bootloader required'
-fi
-for part in misc boot_a boot_b l_agdsp_a; do [ -b "$BY/$part" ] || fail "missing block device: $part"; done
+case "$(getprop ro.boot.slot_suffix)" in
+    _a) src=a; dst=b ;;
+    _b) src=b; dst=a ;;
+    *) fail 'Android slot unavailable; nothing written' ;;
+esac
+# These two actual stock firmwares boot the verified Linux image while
+# reporting green. Keep this exception scoped to the tested model/board.
+case "$(getprop ro.product.model)" in
+    T512N) ;;
+    'ZTE 7546N') [ "$(getprop ro.product.device)" = P720S11 ] || fail 'unknown 41S board' ;;
+    *) [ "$(getprop ro.boot.verifiedbootstate)" = orange ] || fail 'unlocked bootloader required' ;;
+esac
+for part in misc boot_a boot_b l_agdsp_$src; do [ -b "$BY/$part" ] || fail "missing block device: $part"; done
 mkdir "$LOCK" 2>/dev/null || fail 'another boot-chain operation is active (or its lock needs inspection)'
 locked=1
-check_misc || fail 'invalid CRC/BCAB, unsuccessful Android A, verity error or pending B-slot OTA'
+check_misc || fail 'invalid CRC/BCAB, unsuccessful Android slot, verity error or pending opposite-slot OTA'
 before_misc=$bytes
 
 # Check all aliases together, including non-chain partitions: a broken by-name
@@ -114,14 +119,14 @@ for part in $PARTS; do
     [ "$asize" = "$bsize" ] || fail "slot size mismatch: $part"
     [ "$ahash" = "$bhash" ] || diff="$diff $part"
 done
-echo "BOOTCHAIN-PLAN a b$diff"
+echo "BOOTCHAIN-PLAN $src $dst$diff"
 [ "$mode" = sync ] || exit 0
-[ -n "$diff" ] || { echo 'BOOTCHAIN-OK a b (identical; nothing written)'; exit 0; }
+[ -n "$diff" ] || { echo "BOOTCHAIN-OK $src $dst (identical; nothing written)"; exit 0; }
 
 mkdir -p "$BACKUPS" || fail 'cannot create backup parent'
 backup=$(mktemp -d "$BACKUPS/$(date +%Y%m%d-%H%M%S).XXXXXX") || fail 'cannot allocate unique backup directory'
 for part in $diff; do
-    for slot in b a; do
+    for slot in "$dst" "$src"; do
         eval 'expected=$hash_'"$part"'_'"$slot"
         dd if="$BY/${part}_$slot" of="$backup/${part}_$slot.img" bs=1048576 conv=fsync || fail 'backup read/write failed'
         [ "$(sha "$backup/${part}_$slot.img")" = "$expected" ] || fail 'backup verification failed'
@@ -142,9 +147,9 @@ done
 echo "boot chain: verified backups in $backup"
 for part in $diff; do
     changed="$changed $part"
-    expected=$(cat "$backup/${part}_a.sha256")
-    put "$part" "$backup/${part}_a.img" && [ "$(sha "$BY/${part}_b")" = "$expected" ] || fail "write/readback failed: ${part}_b"
-    echo "boot chain: ${part}_b <- ${part}_a, verified"
+    expected=$(cat "$backup/${part}_$src.sha256")
+    put "$part" "$backup/${part}_$src.img" && [ "$(sha "$BY/${part}_$dst")" = "$expected" ] || fail "write/readback failed: ${part}_$dst"
+    echo "boot chain: ${part}_$dst <- ${part}_$src, verified"
 done
 changed=
-echo "BOOTCHAIN-OK a b$diff"
+echo "BOOTCHAIN-OK $src $dst$diff"

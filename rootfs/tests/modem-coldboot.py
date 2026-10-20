@@ -44,12 +44,13 @@ class ColdBoot(unittest.TestCase):
             assert struct.unpack_from('<H', result, 0x96A2)[0] == 0x2400
             return
         # ARM64 MOVZ immediate decodes to LOAD_CP | LOAD_CH, excluding PM bits.
-        instruction = struct.unpack_from('<I', result, 0xD1D0)[0]
+        instruction = struct.unpack_from('<I', result, self.profile[2][1][0])[0]
         mask = (instruction >> 5) & 0xFFFF
         # In this loader CP=bit1, CH=bit5, SP/PM=bit0. Its CP stop/start
         # condition also includes bit3, so exclude both PM-related bits.
         assert mask == 34 and not (mask & (1 | 8))
-        assert result[0xD18C:0xD190] == bytes.fromhex('f3031f2a')
+        offset, _, expected = self.profile[2][0]
+        assert result[offset:offset+len(expected)] == expected
 
     def test_unknown_and_changed_binaries_refused(self):
         with self.assertRaisesRegex(ValueError, 'SHA-256'):
@@ -93,6 +94,14 @@ class ColdBoot(unittest.TestCase):
 
 class T551MColdBoot(ColdBoot):
     profile = (1, 40, cold.T551M_EDITS)
+
+
+class K1ColdBoot(ColdBoot):
+    profile = (2, 183, cold.K1_EDITS)
+
+
+class YH41SColdBoot(ColdBoot):
+    profile = (2, 183, cold.YH41S_EDITS)
 
 
 if __name__ == '__main__':unittest.main()

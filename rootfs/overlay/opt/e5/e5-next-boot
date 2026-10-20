@@ -30,6 +30,16 @@ BC_B=/run/e5linux/misc-bc-slot-b-trial.bin
 # (the OpenWrt tree, openwrt/install.sh) finds them in /etc/e5linux
 [ -f "$BC_A" ] || BC_A=/etc/e5linux/misc-bc-slot-a.bin
 [ -f "$BC_B" ] || BC_B=/etc/e5linux/misc-bc-slot-b-trial.bin
+# Files keep their historical names, but their suffix identifies the physical
+# role. New phones can retain Android B and install OpenWrt A.
+case "$(dd if="$BC_B" bs=1 count=2 2>/dev/null)" in
+    _a) LINUX_SLOT=a; ANDROID_SLOT=b ;;
+    _b) LINUX_SLOT=b; ANDROID_SLOT=a ;;
+    *) echo 'Linux slot metadata unavailable; boot control unchanged' >&2; exit 1 ;;
+esac
+[ "$(dd if="$BC_A" bs=1 count=2 2>/dev/null)" = "_$ANDROID_SLOT" ] || {
+    echo 'Conflicting Android/Linux slot metadata; boot control unchanged' >&2; exit 1;
+}
 MISC=$(cat /run/e5linux/misc-dev 2>/dev/null || readlink -f /dev/block/by-name/misc)
 
 write_bc() {
@@ -60,9 +70,9 @@ next_target() {
     a=$((16#${b:24:2})) s=$((16#${b:28:2}))
     bootable() { [ $(($1 & 15)) -gt 0 ] && { [ $(($1 >> 7 & 1)) = 1 ] || [ $(($1 >> 4 & 7)) -ge 2 ]; }; }
     if bootable $s && { ! bootable $a || [ $((s & 15)) -gt $((a & 15)) ]; }; then
-        echo linux
+        [ "$LINUX_SLOT" = b ] && echo linux || echo android
     else
-        echo android
+        [ "$LINUX_SLOT" = a ] && echo linux || echo android
     fi
 }
 
@@ -104,9 +114,9 @@ esac
 
 case "${1:-status}" in
     linux)   trial && { echo "a trial image (e5.openwrt=) is never the default boot" >&2; exit 1; }
-             set_default linux; echo "default boot: linux (slot b armed)" ;;
-    android) set_default android; echo "next boot: android (slot a)" ;;
-    --rearm) [ "$(cat "$CONF" 2>/dev/null)" = linux ] && write_bc "$BC_B" && echo "slot b re-armed" || echo "default boot is not linux, nothing to do" ;;
+             set_default linux; echo "default boot: linux (slot $LINUX_SLOT armed)" ;;
+    android) set_default android; echo "next boot: android (slot $ANDROID_SLOT)" ;;
+    --rearm) [ "$(cat "$CONF" 2>/dev/null)" = linux ] && write_bc "$BC_B" && echo "slot $LINUX_SLOT re-armed" || echo "default boot is not linux, nothing to do" ;;
     status)  echo "default boot: $(cat "$CONF" 2>/dev/null || echo android)"
              echo "next boot: $(next_target)"
              slot_state ;;

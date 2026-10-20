@@ -395,7 +395,7 @@ const system_cat = {
 			  note: L('屏幕会重新载入', 'The screen reloads') },
 			{ id: 'clock_seconds', type: 'toggle', label: L('时间显示秒', 'Clock with seconds'),
 			  value: ctx.uci().get('e5-infoscreen', 'main', 'clock_seconds') == '1' },
-			{ id: 'version', type: 'info', label: L('镜像版本', 'Image'), value: ctx.read_trim('/etc/e5/image-version') ?? '--' },
+			{ id: 'version', type: 'info', label: L('镜像版本', 'Image'), value: (ctx.image_version ? ctx.image_version() : ctx.read_trim('/etc/e5/image-version')) ?? '--' },
 			{ id: 'built', type: 'info', label: L('构建时间', 'Built'), value: build_time() ?? '--' },
 			{ id: 'screen_version', type: 'info', label: L('信息屏版本', 'Info screen'), value: u.cur },
 			{ id: 'update_check', type: 'action', label: L('检查更新', 'Check for an update'), note: u.note },
@@ -477,6 +477,7 @@ const usb_cat = {
 		let u = ctx.usb_status(), r = u.reset;
 		let s = ctx.sh_json('/usr/libexec/unisoc-modem/device-usb get') ?? {};
 		let roles = { auto:L('自动识别','Automatic'), host:L('主机 · OTG','Host · OTG'), device:L('设备模式','Device mode'), none:L('未连接','Disconnected') };
+		roles['host-sink'] = L('主机＋外部供电（实验）','Host + external power (experimental)');
 		let diagnosis = ctx.network_check_status();
 		let labels = {
 			no_controller:L('USB 控制器缺失','USB controller missing'),
@@ -498,8 +499,8 @@ const usb_cat = {
 			  value:roles[s.role ?? 'none'], note:s.last_error || (s.pending ? L('正在切换…','Switching…') : null) },
 			{ id:'usb_role', type:s.host_supported ? 'choice' : 'info', label:L('USB 角色','USB role'),
 			  value:s.policy ?? 'auto', confirm:true, reload:true,
-			  options:map(['auto','device','host'], value=>({ value, label:roles[value] })),
-			  note:L('切换可能中断 USB 网络；自动模式按接入设备识别','Switching can interrupt USB networking; automatic mode follows the connected device') },
+			  options:map(filter(s.role_supported ?? ['auto','device','host'], value=>roles[value] != null), value=>({ value, label:roles[value] })),
+			  note:s.policy == 'host-sink' ? L('停止本机供电；需要扩展坞向上游提供 5V，不协商 PD，重启恢复自动','Local boost off; dock must supply upstream 5V. No PD negotiation; automatic after reboot') : L('切换可能中断 USB 网络；自动模式按接入设备识别','Switching can interrupt USB networking; automatic mode follows the connected device') },
 			{ id:'usb_host_boot', type:'toggle', label:L('开机启用主机模式','Start in host mode'), value:!!s.role_auto, confirm:true, reload:true,
 			  note:L('开启会切到主机策略；关闭恢复自动识别','Enabling selects host mode; disabling restores automatic detection') },
 			{ id:'usb_net_current', type:'info', label:L('当前共享协议','Current sharing protocol'), value:uc(s.net_current || 'ncm'),
@@ -537,7 +538,7 @@ const usb_cat = {
 		let s = ctx.sh_json('/usr/libexec/unisoc-modem/device-usb get');
 		if (!s?.ok) return 'USB status unavailable';
 		let args;
-		if (id == 'usb_role' && index(['auto','host','device'], value) >= 0)
+		if (id == 'usb_role' && index(s.role_supported ?? ['auto','host','device'], value) >= 0 && index(['auto','host','device','host-sink'], value) >= 0)
 			args = `set-role ${value} ${value == 'host' && s.role_auto ? '1' : '0'}`;
 		else if (id == 'usb_host_boot' && type(value) == 'bool') args = `set-role ${value ? 'host 1' : 'auto 0'}`;
 		else if (id == 'usb_lan_auto' && type(value) == 'bool') args = `set-lan-auto ${value ? '1' : '0'}`;

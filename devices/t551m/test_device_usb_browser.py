@@ -16,6 +16,7 @@ with sync_playwright() as p:
         window.devices=[{name:'eth1',driver:'r8152',mac:'02:11:22:33:44:55',carrier:1,in_lan:1,bound:1},
             {name:'eth2',driver:'cdc_ncm',carrier:1,in_lan:0,bound:0,managed_elsewhere:1}];
         window.calls=[];window.messages=[];
+        window.Charge={mount(){}};
         window.L={resolveDefault:(promise,fallback)=>promise.catch(()=>fallback)};
         window.M={ injectCss(){},localizeMenu(){},localize(){},translate:s=>s,
             busy:(button,on)=>{button.disabled=on},confirmBox:()=>Promise.resolve(true),
@@ -35,6 +36,7 @@ with sync_playwright() as p:
     page.wait_for_selector('.mud-device-item')
     assert page.locator('#mud-usb-role').input_value() == 'auto'
     assert page.locator('#mud-usb-role-now').inner_text() == '设备模式'
+    assert page.locator('#mud-usb-role option[value="host-sink"]').count() == 0
     assert not page.locator('#mud-usb-role-apply').is_disabled()
     assert page.locator('#mud-usb-net-apply').is_disabled()
     assert page.locator('.mud-device-item .mud-btn').all_text_contents() == ['已加入 LAN', '已分配其他网络']
@@ -48,6 +50,15 @@ with sync_playwright() as p:
     page.evaluate("fixture.last_error='测试失败';fixture.policy='auto';fixture.role='none';screenView.reloadState()")
     page.wait_for_function('document.querySelector("#mud-usb-role-note").textContent==="测试失败"')
     assert page.locator('#mud-usb-role-now').inner_text() == '未连接'
+    page.evaluate("Object.assign(fixture,{last_error:'',role_supported:['auto','device','host','host-sink']});screenView.reloadState()")
+    page.wait_for_selector('#mud-usb-role option[value="host-sink"]',state='attached')
+    page.locator('#mud-usb-role').select_option('host-sink')
+    assert page.locator('#mud-usb-role-auto').is_disabled()
+    assert '不进行 PD' in page.locator('#mud-usb-role-note').inner_text()
+    page.locator('#mud-usb-role-apply').click()
+    page.wait_for_function('calls.some(c=>c.kind==="role"&&c.value==="host-sink"&&c.auto==="0")')
+    page.locator('#mud-usb-role').select_option('auto')
+    assert '不进行 PD' not in page.locator('#mud-usb-role-note').inner_text()
     page.evaluate("Object.assign(fixture,{net_available:1,net_current:'ncm',net_mode:'ncm',net_supported:['ncm','ecm','rndis'],role:'host'});screenView.reloadState()")
     page.wait_for_function('!document.querySelector("#mud-usb-net-apply").disabled')
     page.locator('#mud-usb-net-mode').select_option('rndis')

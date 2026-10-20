@@ -238,7 +238,7 @@ function renderBar(st) {
 
 	const b = st.battery, bat = $('bar-bat');
 	const cap = b.capacity ?? 0;
-	bat.querySelector('b').style.width = Math.round(cap / 100 * 17) + 'px';
+	bat.querySelector('b').style.transform = `scaleX(${Math.max(0, Math.min(100, cap)) / 100})`;
 	bat.classList.toggle('low', cap <= 15 && chargeState(b) != 'charging');
 	bat.classList.toggle('charging', chargeState(b) == 'charging');
 	setText('bar-batpct', b.capacity == null ? '--' : cap + '%');

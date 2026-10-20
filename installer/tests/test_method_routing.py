@@ -49,6 +49,16 @@ class ReadOnlyAdb:
 
 
 class MethodRouting(unittest.TestCase):
+    def test_e5_probe_keeps_both_android_and_linux_roles(self):
+        for slot in ('_a','_b'):
+            a=self.adapter()
+            properties=a.adb.properties();properties['ro.boot.slot_suffix']=slot
+            with self.subTest(slot=slot),patch.object(a.adb,'properties',return_value=properties):
+                device=a.probe(SERIAL,'boot')
+                self.assertEqual(device['slot'],slot)
+                self.assertEqual(a.legacy.ANDROID_SLOT,slot[1:])
+                self.assertEqual(a.legacy.LINUX_SLOT,'b' if slot=='_a' else 'a')
+
     def adapter(self,kind='e5',card=False):
         a=Adapter.__new__(Adapter);a.kind=kind;a.root=Path('.');a.ctx=None;a.password=''
         a.package={'adapter':kind,'path':'.','profile':'e5' if kind=='e5' else 'mu300-family'}
@@ -72,11 +82,12 @@ class MethodRouting(unittest.TestCase):
                         if method=='boot':a.read_gpt.assert_not_called()
 
     def test_t512n_engineering_boot_state_does_not_relax_existing_profiles(self):
-        for profile,model,allowed in [('t512n','T512N',True),('e5','E5',False)]:
+        for profile,model,allowed in [('t512n','T512N',True),('yuanhang41s','ZTE 7546N',True),('e5','E5',False)]:
             with self.subTest(profile=profile):
                 a=self.adapter()
                 properties=a.adb.properties()
                 properties.update({'ro.product.model':model,'ro.boot.verifiedbootstate':'green'})
+                if profile=='yuanhang41s':properties['ro.product.device']='P720S11'
                 a.adb.properties=Mock(return_value=properties)
                 a.legacy.package_profile.return_value={'profile':profile,'android_models':[model]}
                 if allowed:

@@ -20,10 +20,16 @@ VERIFIED_VOLTAGE_FIRMWARE = frozenset({
     # arithmetic verified from this device's SML; devices/t512n/CPU-POWER.zh-CN.md.
     'b0beb84a18b4d823bf62ec1ea36a46b960b5ea0a54433d449d8a007968879075',
 })
-VERIFIED_M8_VOLTAGE_FIRMWARE = frozenset({
+VERIFIED_UMS9620_VOLTAGE_FIRMWARE = frozenset({
     '31425dab4aca8450757ac4207de419d06643b7204776fc7e8da5aab1d68814df',
+    # ZTE 7546N/P720S11 20240508.225723: own SML decoder, paired
+    # tables and selector arithmetic; devices/yuanhang41s/CPU-POWER.zh-CN.md.
+    'cdfd5fb2186f00ab18e6aca37ee54053704a1e6252dc415aeed190d6892db71b',
+    # AngelCare.K1.YUAN.YD.T1.0: DVFS code/tables match the verified M8
+    # payload byte-for-byte; devices/k1/CPU-POWER.zh-CN.md.
+    'efc2e6cf3a83a1dbbedecbea12673a7320520632b7b3f59c9072276f9b24d5eb',
 })
-VOLTAGE_CAPABILITY_CACHE = 'voltage-supported-v4'
+VOLTAGE_CAPABILITY_CACHE = 'voltage-supported-v6'
 
 
 def read(path, default=''):
@@ -79,7 +85,7 @@ class Control:
         compatible = read(self.root / 'sys/firmware/devicetree/base/compatible')
         compatibles = compatible.split('\0')
         verified = (VERIFIED_VOLTAGE_FIRMWARE if 'sprd,ums9621' in compatibles else
-                    VERIFIED_M8_VOLTAGE_FIRMWARE if 'sprd,ums9620' in compatibles else ())
+                    VERIFIED_UMS9620_VOLTAGE_FIRMWARE if 'sprd,ums9620' in compatibles else ())
         if verified:
             hashes = {}
             for entry in (self.root / 'sys/class/block').glob('*/uevent'):

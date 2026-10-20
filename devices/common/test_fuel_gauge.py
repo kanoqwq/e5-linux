@@ -177,6 +177,60 @@ int main(void) {
 '''
 
 
+REMOVE_STUBS = r'''
+struct power_supply { bool alive; };
+struct charger_manager;
+struct ops {void (*remove)(void *);};
+struct info {struct ops *ops;};
+struct charger_manager {int entry,cap_update_work,fullbatt_vchk_work,uvlo_work;
+ struct info *fchg_info,*vchg_info; struct power_supply *charger_psy;};
+struct platform_device {struct charger_manager *cm;};
+static int cm_list_mtx,setup_polling,cm_monitor_work,cancels,disabled;
+static struct charger_manager *platform_get_drvdata(struct platform_device *p){return p->cm;}
+static void mutex_lock(int *p){assert(!*p);*p=1;}
+static void mutex_unlock(int *p){assert(*p);*p=0;}
+static void list_del(int *p){(void)p;assert(cm_list_mtx);}
+static void cancel_work_sync(int *p){(void)p;cancels++;}
+static void cancel_delayed_work_sync(int *p){(void)p;cancels++;}
+static void try_charger_enable(struct charger_manager *c,bool on){assert(!on&&c->charger_psy->alive);disabled++;}
+'''
+
+REMOVE_MAIN = r'''
+int main(void){
+ struct power_supply psy={true};struct info info={0};
+ struct charger_manager cm={.fchg_info=&info,.vchg_info=&info,.charger_psy=&psy};
+ struct platform_device dev={&cm};charger_manager_remove(&dev);
+ assert(cancels==5&&disabled==1&&psy.alive);
+ /* devres owns the only release, after remove has finished. */
+ psy.alive=false;
+ puts("PASS: CM remove stops writers and disables charging before its single devres release");
+}
+'''
+
+
+CHARGE_STUBS = r'''
+typedef long long s64;
+#define CM_CAP_FULL_PERCENT 1000
+struct desc {int cap;};struct charger_manager {int dev;struct desc *desc;};
+static int total=5000000,read_error;
+static int get_batt_total_cap(struct charger_manager *c,int *v){(void)c;*v=total;return read_error;}
+static long long div_s64(long long value,int divisor){return value/divisor;}
+'''
+CHARGE_MAIN = r'''
+int main(void){
+ struct desc d={0};struct charger_manager cm={.desc=&d};int result;
+ int sizes[]={2000000,3100000,4000000,5000000,6000000,10000000,20000000};
+ for(unsigned n=0;n<sizeof(sizes)/sizeof(sizes[0]);n++)for(d.cap=0;d.cap<=1000;d.cap++){
+  total=sizes[n];assert(!cm_get_charge_now(&cm,&result));
+  assert(result==(long long)total*d.cap/1000);
+ }
+ total=5000000;d.cap=948;assert(!cm_get_charge_now(&cm,&result)&&result==4740000);
+ read_error=-EIO;assert(cm_get_charge_now(&cm,&result)==-EIO);
+ puts("PASS: charge_now 2-20 Ah at all 1001 SOC values, 94.8% regression and read errors; no signed multiply overflow");
+}
+'''
+
+
 def main():
     kernel=Path(sys.argv[1]).resolve()
     paths=[line[6:] for line in (HERE/'fuel-gauge-state.patch').read_text().splitlines() if line.startswith('+++ b/')]
@@ -193,6 +247,8 @@ def main():
             ('registers',REGISTER_STUBS,'\n'.join(function(hardware,n) for n in ('ump96xx_fgu_read_last_cap','ump96xx_fgu_read_normal_temperature_cap','ump96xx_fgu_save_last_cap','ump96xx_fgu_save_normal_temperature_cap')),REGISTER_MAIN),
             ('restore',CORE_STUBS,function(core,'sprd_fgu_get_boot_capacity')+'\n'+function(core,'sprd_fgu_save_capacity'),CORE_MAIN),
             ('shutdown',SHUTDOWN_STUBS,function(cm,'charger_manager_shutdown'),SHUTDOWN_MAIN),
+            ('remove',REMOVE_STUBS,function(cm,'charger_manager_remove'),REMOVE_MAIN),
+            ('charge-now',CHARGE_STUBS,function(cm,'cm_get_charge_now'),CHARGE_MAIN),
         ]
         for name,stubs,body,main_code in cases:
             source=root/(name+'.c');source.write_text(PRELUDE+stubs+body+main_code)

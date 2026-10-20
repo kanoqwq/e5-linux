@@ -11,7 +11,8 @@ import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-apply = runpy.run_path(str(HERE/'sipa.py'))['apply']
+scope = runpy.run_path(str(HERE/'sipa.py'))
+apply = scope['apply']
 
 
 def function(source, name):
@@ -101,7 +102,10 @@ TX_STUBS = r'''
 #define pr_err(...) ((void)0)
 typedef unsigned short __sum16;
 typedef int netdev_tx_t;
-struct sk_buff { unsigned len, headroom; int mac_header, network_header, protocol, ip_summed; };
+struct sk_buff { unsigned len, headroom; int mac_header, network_header, protocol, ip_summed;
+ unsigned char padding[14]; };
+struct ethhdr { unsigned char addresses[12]; unsigned short h_proto; };
+#include <string.h>
 struct net_device_stats { unsigned tx_dropped,tx_errors,tx_packets,tx_bytes; };
 struct sipa_eth_init_data { int netid, src_id; };
 struct sipa_eth { struct sipa_eth_init_data *pdata; struct net_device_stats *stats; int state,nic_id; };
@@ -112,14 +116,22 @@ static struct iphdr fake_ipv4;static struct ipv6hdr fake_ipv6;static struct tran
 #define ipv6_hdr(s) (&fake_ipv6)
 #define tcp_hdr(s) (&tcp)
 #define udp_hdr(s) (&udp)
-static int queue_lock, next_result, linearize_result, recovery, freed;
+static int queue_lock, next_result, linearize_result, cow_result, recovery, freed;
 static void *netdev_priv(struct net_device *d){return d->priv;}
 static int skb_linearize(struct sk_buff *s){(void)s;return linearize_result;}
+static int skb_cow_head(struct sk_buff *s,unsigned n){if(cow_result)return cow_result;if(s->headroom<n)s->headroom=n;return 0;}
 static unsigned skb_headroom(struct sk_buff *s){return s->headroom;}
 static void dev_kfree_skb_any(struct sk_buff *s){(void)s;freed++;}
-static void skb_push(struct sk_buff *s,unsigned len){assert(s->headroom>=len);s->headroom-=len;s->len+=len;}
+static void *skb_push(struct sk_buff *s,unsigned len){assert(s->headroom>=len);s->headroom-=len;s->len+=len;return s->padding;}
 static void skb_pull(struct sk_buff *s,unsigned len){s->headroom+=len;s->len-=len;}
-static int sipa_nic_tx(int nic,int src,int netid,struct sk_buff *s){(void)nic;(void)src;(void)netid;(void)s;return next_result;}
+static int sipa_nic_tx(int nic,int src,int netid,struct sk_buff *s){
+ (void)nic;(void)src;(void)netid;
+ if(s->mac_header==s->network_header){
+  for(int i=0;i<12;i++)assert(s->padding[i]==0);
+  assert(((struct ethhdr *)s->padding)->h_proto==s->protocol);
+ }
+ return next_result;
+}
 static bool sipa_nic_check_flow_ctrl(int nic){(void)nic;assert(held);return next_result==-EINPROGRESS;}
 static void netif_stop_queue(struct net_device *d){assert(held);d->stopped=true;}
 static void sipa_nic_trigger_flow_ctrl_work(int nic,int error){(void)nic;(void)error;assert(!held);recovery++;}
@@ -134,6 +146,7 @@ int main(void) {
  for(int raw=0;raw<2;raw++) for(int partial=0;partial<2;partial++) {
   skb=(struct sk_buff){.len=100,.headroom=64,.network_header=raw?0:14,
    .protocol=ipv6?ETH_P_IPV6:ETH_P_IP,.ip_summed=partial?CHECKSUM_PARTIAL:0};
+  memset(skb.padding,0xa5,sizeof(skb.padding));
   fake_ipv4.protocol=fake_ipv6.nexthdr=is_tcp?IPPROTO_TCP:IPPROTO_UDP;
   tcp.check=0x1234;udp.check=0x5678;int previous_recovery=recovery;
   for(int i=0;i<50;i++) {
@@ -150,16 +163,20 @@ int main(void) {
  assert(stats.tx_packets==16 && stats.tx_bytes==1600 && !freed);
  skb.len=100;skb.headroom=64;linearize_result=-ENOMEM;
  assert(sipa_eth_start_xmit(&skb,&dev)==NETDEV_TX_OK && freed==1 && stats.tx_dropped==1);
+ linearize_result=0;cow_result=-ENOMEM;skb.mac_header=skb.network_header=0;
+ assert(sipa_eth_start_xmit(&skb,&dev)==NETDEV_TX_OK && freed==2 && stats.tx_dropped==2);
+ cow_result=0;skb.headroom=0;next_result=0;
+ assert(sipa_eth_start_xmit(&skb,&dev)==NETDEV_TX_OK&&skb.len==114&&!skb.headroom);
  puts("PASS: 16 protocol/header/checksum combinations, 50 retries each preserve geometry and checksum seed, balanced recovery and consumption");
 }
 '''
 
 COMPLETION_STUBS = r'''
 #define SIPA_LEAVE_FLOWCTRL 1
-struct sipa_node_desc_tag { int match; };
+struct sipa_node_desc_tag { int match;unsigned err_code,src,dst,net_id,length; };
 struct fifo { int idx; struct {int fifo_depth;} rx_fifo; };
 struct endpoint { struct fifo send_fifo; };
-struct sipa_skb_sender { int dev,left_cnt;bool free_notify_net;struct endpoint *ep; };
+struct sipa_skb_sender { int dev,left_cnt;unsigned completion_error_cnt;bool free_notify_net;struct endpoint *ep; };
 struct sipa_plat_drv_cfg { struct sipa_skb_sender *sender; };
 static struct endpoint ep={.send_fifo.rx_fifo.fifo_depth=8};
 static struct sipa_skb_sender sender={.ep=&ep};
@@ -184,6 +201,12 @@ int main(void) {
  advanced=freed=0;sender.left_cnt=0;null_at=1;nodes[0].match=1;sipa_free_sent_items();
  assert(advanced==1 && freed==1 && sender.left_cnt==1);
  count=0;advanced=freed=0;sipa_free_sent_items();assert(!advanced && !freed);
+ count=1;null_at=-1;nodes[0].match=1;
+ for(unsigned error=1;error<16;error++){
+  nodes[0].err_code=error;sipa_free_sent_items();
+  assert(sender.completion_error_cnt==error);
+ }
+ assert(advanced==15&&freed==15);
  puts("PASS: unmatched completion cannot discard later buffers, credits count reclaimed buffers, null node advances only consumed prefix");
 }
 '''
@@ -220,10 +243,41 @@ int main(void) {
 '''
 
 
+EVENT_STUBS = r'''
+#define SIPA_HAL_TXFIFO_FULL_INT 0x40000
+#define SIPA_HAL_TXFIFO_OVERFLOW 0x20000
+#define SIPA_HAL_ERRORCODE_IN_TX_FIFO 0x10000
+#define SIPA_HAL_ENTER_FLOW_CTRL 0x80000
+#define SIPA_HAL_EXIT_FLOW_CTRL 0x100000
+#define SIPA_RECV_WARN_EVT 0x70000
+#define SIPA_RECV_EVT 0x8000
+enum sipa_hal_evt_type {NO_EVENT=0};
+struct ep {int id;};
+struct sipa_skb_sender {int dev,no_free_cnt,free_waitq,enter_flow_ctrl_cnt,exit_flow_ctrl_cnt;struct ep *ep;};
+static int wakeups;
+static void wake_up(int *p){(void)p;wakeups++;}
+'''
+EVENT_MAIN = r'''
+int main(void){
+ struct ep ep={1};struct sipa_skb_sender s={.ep=&ep};
+ sipa_sender_notify_cb(&s,SIPA_HAL_ERRORCODE_IN_TX_FIFO,0,0);
+ assert(s.no_free_cnt==0&&wakeups==1);
+ sipa_sender_notify_cb(&s,SIPA_HAL_TXFIFO_FULL_INT,0,0);
+ assert(s.no_free_cnt==1&&wakeups==2);
+ sipa_sender_notify_cb(&s,SIPA_HAL_TXFIFO_OVERFLOW|SIPA_HAL_ERRORCODE_IN_TX_FIFO,0,0);
+ assert(s.no_free_cnt==2&&wakeups==3);
+ sipa_sender_notify_cb(&s,SIPA_HAL_ENTER_FLOW_CTRL|SIPA_HAL_EXIT_FLOW_CTRL,0,0);
+ assert(s.enter_flow_ctrl_cnt==1&&s.exit_flow_ctrl_cnt==1);
+ puts("PASS: packet rejection is not FIFO pressure; completions and real queue faults still wake the reclaimer");
+}
+'''
+
+
 def main():
     kernel = Path(sys.argv[1]).resolve()
     patch = HERE/'sipa-data-path.patch'
-    paths = [line[6:] for line in patch.read_text().splitlines() if line.startswith('+++ b/')]
+    paths = sorted({line[6:] for item in scope['PATCHES'] for line in item.read_text().splitlines()
+                    if line.startswith('+++ b/')})
     with tempfile.TemporaryDirectory(prefix='sipa-regression-') as directory:
         root = Path(directory)
         for name in paths:
@@ -251,6 +305,7 @@ def main():
             ('power', POWER_STUBS, function(cp,'cp_dele_on_commad'), POWER_MAIN),
             ('backpressure', TX_STUBS, function(sources['sipa_eth.c'],'sipa_eth_start_xmit'), TX_MAIN),
             ('completion', COMPLETION_STUBS, function(sources['sipa_skb_send.c'],'sipa_free_sent_items'), COMPLETION_MAIN),
+            ('events', EVENT_STUBS, function(sources['sipa_skb_send.c'],'sipa_sender_notify_cb'), EVENT_MAIN),
             ('handshake', HANDSHAKE_STUBS, '\n'.join(function(sources['sipa_dele_cmn.c'],name) for name in (
                 'sipa_dele_local_rls_r_prod','sipa_dele_local_req_r_prod','sipa_dele_on_done')), HANDSHAKE_MAIN),
         ]:
@@ -271,7 +326,7 @@ def main():
         subprocess.run(['cc','-std=gnu11','-Wno-unused-variable',str(source),'-o',str(executable)],check=True)
         result = subprocess.run([str(executable)],capture_output=True)
         assert result.returncode != 0 and b'tcp.check==0x1234 && udp.check==0x5678' in result.stderr, result.stderr
-        broken = root/paths[0]
+        broken = root/'drivers/unisoc_platform/net/sipa_delegate/sipa_dele_cp_in_ap.c'
         broken.write_text(broken.read_text().replace('mutex_lock(&delegator->power_lock);','changed_vendor_function();',1))
         before = {name:(root/name).read_bytes() for name in paths}
         try: apply(root)

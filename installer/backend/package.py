@@ -27,8 +27,10 @@ def inspect_package(directory):
     else:
         profile_data = json.loads(safe_file(root, 'files/device-profile.json').read_text())
         adapter, profile, layout, kernel = 'e5', profile_data['profile'], 'e5root-ext4', 'e5-boot-v2'
-        if profile not in ('e5', 'm8', 't551m', 't512n'):
+        if profile not in ('e5', 'm8', 't551m', 't512n', 'yuanhang41s', 'k1'):
             raise ValueError('Unsupported device profile / 不支持的机型')
+        if profile == 'k1' and profile_data.get('android_models') != ['angelcare K1']:
+            raise ValueError('K1 package model identity differs / K1 安装包型号不匹配')
         checks = {}
         for line in safe_file(root, 'files/SHA256SUMS').read_text().splitlines():
             digest, name = line.split(None, 1)
