@@ -15,6 +15,18 @@
     "source": "{workspace}/sources/e5-kernel",
     "revision": "020b970e351eee3887e6caaf2d653926e7086e44"
   },
+  "native_kernel_builds": {
+    "k1": {
+      "source": "{workspace}/k1/linux-cache",
+      "objects": "{workspace}/k1/build",
+      "base_config": "{workspace}/kernels/m8/config"
+    },
+    "yuanhang41s": {
+      "source": "{workspace}/sources/e5-kernel",
+      "objects": "{workspace}/objects/e5-family",
+      "base_config": "{workspace}/kernels/m8/config"
+    }
+  },
   "profiles": {
     "e5": {
       "kernel": "{workspace}/kernels/e5",

@@ -83,6 +83,15 @@ python3 tools/build-release.py run --label block-mount -- bash openwrt/build-blo
 私有视图中恢复到指定 Git 基线，通过干净检查后才调用上表原有准备器／构建器。
 Git 对象库共用，索引、补丁层、对象和模块交付件按机型分开；构建退出时卸载视图。
 
+K1 和远航41S 已有独立的原生源码／对象缓存，登记在 `tools/build-layout.json`
+的 `native_kernel_builds`。它们分别使用 `k1/linux-cache`＋`k1/build`、
+`sources/e5-kernel`＋`objects/e5-family`；后者的名字虽然含 e5-family，
+现有 `.config` 和 release 必须是远航41S，不能当其他机型的共享对象目录。
+两者的完整平台基线均为已验证的 `kernels/m8/config`，输出仍取各 profile 的 kernel 路径。
+通过 `build-release.py run` 调用各自的 `devices/<profile>/build-kernel.py`，
+显式传入登记的 `--kernel`、`--build`、`--base-config`、`--out`；不建立新源码副本。
+远航41S 构建会重放自己的准备流程，之后使用 overlay 视图前需按下述规则核对底层指纹。
+
 ```sh
 sudo python3 tools/build-release.py run --workspace /home/kano/openwrt-build \
   --label e5-kernel -- python3 tools/build-profile-kernel.py \
