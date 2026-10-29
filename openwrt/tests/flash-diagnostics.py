@@ -27,8 +27,8 @@ class Diagnostics(unittest.TestCase):
     def test_userdata_verification_uploads_loop_helper_before_running_worker(self):
         with patch.object(flash,'push') as push,patch.object(flash,'su_checked') as execute:
             flash.stage_userdata_image(2 << 30, 10 << 30)
-        self.assertEqual([call.args[2] for call in push.call_args_list],['android-loop.sh','userdata-image.sh'])
-        self.assertIn('/e5-android-loop.sh',push.call_args_list[0].args[1])
+        self.assertEqual([call.args[2] for call in push.call_args_list],['NV preservation','android-loop.sh','userdata-image.sh'])
+        self.assertIn('/e5-android-loop.sh',push.call_args_list[1].args[1])
         self.assertIn('2147483648 10737418240 2048 10240',execute.call_args.args[1])
 
     def test_part_mode_is_whole_and_separate_from_check(self):
@@ -73,7 +73,7 @@ class Diagnostics(unittest.TestCase):
         import inspect
         self.assertIn("'--reinstall-part'", inspect.getsource(flash))
 
-    def test_wrong_profile_is_rejected_before_partition_commands(self):
+    def test_declined_model_exception_stops_before_partition_commands(self):
         for profile, model, wrong in (('e5', 'E5', 'T551M'),
                                      ('t551m', 'T551M', 'VIPME M8'),
                                      ('m8', 'VIPME M8', 'E5')):
@@ -85,15 +85,18 @@ class Diagnostics(unittest.TestCase):
                         return '2000'
                     if command.endswith(' -c id'):
                         return 'uid=0(root)'
+                    if command=='getprop ro.product.device':return 'fixture-board'
                     self.assertEqual(command, 'getprop ro.product.model')
                     return wrong
                 with patch.object(flash, 'F', directory), patch.object(flash, 'SU', None), \
                      patch.object(flash, 'adb', return_value='List of devices attached\nunit\tdevice\n'), \
+                     patch.object(flash, 'ask', return_value='no') as ask, \
                      patch.object(flash, 'sh', shell), patch.object(flash, 'su') as su, \
                      contextlib.redirect_stderr(io.StringIO()):
                     with self.assertRaises(SystemExit):
                         flash.android_checks()
                     su.assert_not_called()
+                    ask.assert_called_once()
 
     def control(self, a=0x9f, b=0x1e):
         data = bytearray(32)

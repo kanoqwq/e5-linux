@@ -81,6 +81,7 @@ class Slots(unittest.TestCase):
         for android, linux in [('a','b'), ('b','a')]:
             def shell(command):
                 return {'id -u':'0', 'getprop ro.product.model':'T551M',
+                        'getprop ro.product.device':'T551M',
                         'getprop ro.boot.slot_suffix':'_'+android,
                         'getprop ro.boot.verifiedbootstate':'orange'}[command]
             with self.subTest(android=android), patch.multiple(flash, SERIAL='unit', GUI=None,

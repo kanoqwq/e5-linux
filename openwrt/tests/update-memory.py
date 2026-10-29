@@ -16,7 +16,8 @@ TOP=Path(__file__).resolve().parents[2]
 class UpdateMemory(unittest.TestCase):
     def test_offline_preflight_uses_physical_ram_not_running_browser_ram(self):
         source=(TOP/'openwrt/device-stage-part-update.sh').read_text()
-        code=source[source.index('payload=$(du'):source.index('cid=$(cat')]
+        start=source.index('payload=$(du')
+        code=source[start:source.index('cid=',start)]
         for total,expected in ((1532172,True),(200000,False)):
             with self.subTest(total=total),tempfile.TemporaryDirectory() as d:
                 root=Path(d);(root/'nv.tar').write_bytes(b'compressed NV fixture')

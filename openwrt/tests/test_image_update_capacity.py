@@ -207,6 +207,7 @@ class HostImageCapacity(unittest.TestCase):
                 commands = []
                 def execute(_client, command, **_options):
                     commands.append(command)
+                    if command=='cat /etc/e5/device-profile':return 'e5'
                     return 'image' if command.startswith('if [ -f /etc/e5/part-root ]') else ''
                 with patch.object(self.module, 'GUI', gui), patch.object(self.module, 'execute', side_effect=execute), \
                      patch.object(self.module.runpy, 'run_path', return_value={}), \
