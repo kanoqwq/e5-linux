@@ -29,6 +29,9 @@ class Charger(unittest.TestCase):
             supply=root/'drivers/power/supply'
             supply.mkdir(parents=True)
             target=supply/'bq2560x-charger.c'
+            (supply/'sprd_battery_info.c').write_text(
+                '\tof_property_read_u32_index(battery_np, "charge-dcp-current-microamp", 1,\n'
+                '\t\t\t\t   &info->cur.dcp_limit);\n')
             target.write_bytes((HERE.parent/'m8/port/drivers/power/supply/bq2560x-charger.c').read_bytes())
             for name in ('Kconfig','Makefile'):(supply/name).write_text('')
             runpy.run_path(str(HERE/'charger.py'))['apply'](root)
@@ -93,6 +96,43 @@ static int bq2560x_update_bits(struct bq2560x_charger_info *i, u8 reg, u8 mask, 
             binary=root/'test'
             subprocess.run(['cc','-std=c11','-O2','-Wall','-Wextra','-Werror',str(source),'-o',str(binary)],check=True)
             subprocess.run([str(binary)],check=True)
+
+
+    def test_dcp_input_ceiling_is_model_only_and_preserves_other_currents(self):
+        policy=runpy.run_path(str(HERE/'charger.py'))['dcp_input_policy']
+        original=''.join('\tof_property_read_u32_index(battery_np, "charge-'+kind+'-current-microamp", '+str(index)+',\n'
+            '\t\t\t\t   &info->cur.'+kind+('_cur' if index==0 else '_limit')+');\n'
+            for kind in ('sdp','dcp','cdp','unknown') for index in (0,1))
+        changed=policy(original)
+        self.assertEqual(policy(changed),changed)
+        self.assertEqual(changed.replace('\n\t/* User-requested P720S20 DCP input ceiling; not battery charge current. */\n'
+            '\tif (info->cur.dcp_limit > 0)\n\t\tinfo->cur.dcp_limit = 2500000;', ''), original)
+        with self.assertRaises(ValueError):policy('unrecognized parser')
+        if os.name=='nt':return
+        fixture='''#include <assert.h>
+#include <string.h>
+struct currents {int sdp_cur,sdp_limit,dcp_cur,dcp_limit,cdp_cur,cdp_limit,unknown_cur,unknown_limit;};
+struct info {struct currents cur;};
+static int missing;
+static void of_property_read_u32_index(void *np,const char *name,int index,int *value) {
+    (void)np; if(missing) return;
+    *value=!strcmp(name,"charge-sdp-current-microamp")?500000:1000000;
+    if(!strcmp(name,"charge-cdp-current-microamp") && index==1)*value=1500000;
+}
+static void load(struct info *info) {void *battery_np=0;
+'''+changed+'''}
+int main(void) {
+    struct info info={0};load(&info);
+    assert(info.cur.dcp_limit==2500000 && info.cur.dcp_cur==1000000);
+    assert(info.cur.sdp_limit==500000 && info.cur.cdp_limit==1500000 && info.cur.unknown_limit==1000000);
+    missing=1;info.cur.dcp_limit=-22;load(&info);assert(info.cur.dcp_limit==-22);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'test.c').write_text(fixture)
+            subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',str(root/'test.c'),'-o',str(root/'test')],check=True)
+            subprocess.run([str(root/'test')],check=True)
 
 
 if __name__=='__main__':unittest.main()

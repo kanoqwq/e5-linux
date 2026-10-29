@@ -10,8 +10,23 @@ import runpy
 HERE = Path(__file__).resolve().parent
 
 
+def dcp_input_policy(source):
+    """P720S20 opt-in input ceiling; keep battery CC and all other source limits."""
+    old = ('\tof_property_read_u32_index(battery_np, "charge-dcp-current-microamp", 1,\n'
+           '\t\t\t\t   &info->cur.dcp_limit);')
+    new = old + ('\n\t/* User-requested P720S20 DCP input ceiling; not battery charge current. */\n'
+                 '\tif (info->cur.dcp_limit > 0)\n\t\tinfo->cur.dcp_limit = 2500000;')
+    if new in source:
+        return source
+    if source.count(old) != 1:
+        raise ValueError('Unexpected P720S20 DCP battery-info parser')
+    return source.replace(old, new, 1)
+
+
 def apply(kernel):
     kernel = Path(kernel)
+    battery = kernel/'drivers/power/supply/sprd_battery_info.c'
+    updated_battery = dcp_input_policy(battery.read_text())
     replace = runpy.run_path(str(HERE.parent/'t551m/prepare-kernel.py'))['replace_function']
     path = kernel/'drivers/power/supply/bq2560x-charger.c'
     source = path.read_text().replace('GPL-2.0:', 'GPL-2.0-only')
@@ -122,6 +137,7 @@ def apply(kernel):
                             '#define BQ2560X_REG_NUM\t\t\t\t0x0c')
     source = source.replace('for (i = 0; i < 0x10; i++)', 'for (i = 0; i <= 0x0b; i++)')
     path.write_text(source)
+    battery.write_text(updated_battery)
     for name, marker, addition in (
         ('drivers/power/supply/Kconfig', 'config CHARGER_BQ2560X_SPRD',
          'config CHARGER_BQ2560X_SPRD\n\ttristate "Unisoc BQ2560x charger"\n\tdepends on I2C && CHARGER_MANAGER && GPIOLIB\n'),
