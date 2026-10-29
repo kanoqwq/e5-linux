@@ -62,6 +62,7 @@ function App() {
   const [modelPendingReset, setModelPendingReset] = useState<string>();
   useEffect(() => {setNvDismissed(false);setNvInput('');}, [tx?.nv_recovery?.nonce]);
   const [busy, setBusy] = useState(false);
+  const [restartPending, setRestartPending] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [logOpen, setLogOpen] = useState(false);
   const [clock, setClock] = useState(Date.now());
@@ -85,6 +86,7 @@ function App() {
       if (next.revision < (revisions.current.get(next.id) ?? -1)) return;
       revisions.current.set(next.id, next.revision);
     }
+    if (next.details?.reboot_manually === false || next.details?.verification_error || ['completed','failed','cancelled'].includes(next.status)) setRestartPending(false);
     const key = `${next.id}:${next.stage}:${next.status}:${next.details?.tool || ''}:${next.details?.connection_state || ''}:${next.details?.verification_error || ''}:${next.error?.message || ''}`;
     if (key !== lastTransaction.current) {
       lastTransaction.current = key;
@@ -123,6 +125,13 @@ function App() {
     } catch (e) {if (notice !== undefined) toast.dismiss(notice); reportError(String(e)); return undefined;}
     finally {pending.current--; setBusy(pending.current > 0);}
   };
+  const rebootDevice = async () => {
+    if (!tx || restartPending) return;
+    setRestartPending(true);
+    const accepted = await task(async () => (await request<{accepted:boolean}>('reboot_device', {transaction:tx.id})).accepted, t.rebootQueued);
+    if (!accepted) setRestartPending(false);
+  };
+  useEffect(() => {setRestartPending(false);}, [tx?.id]);
   useEffect(() => {
     const query = matchMedia('(prefers-color-scheme: dark)');
     const update = () => document.documentElement.classList.toggle('dark', theme === 'dark' || theme === 'system' && query.matches);
@@ -401,7 +410,7 @@ function App() {
             {tx.error && <div className="alert danger"><CircleAlert size={20}/><div><p className="error-message">{tx.error.message}</p><Button className="copy-diagnostics" variant="outline" disabled={busy} onClick={copyDiagnostics}><Copy size={15}/>{t.copyDiagnostics}</Button></div></div>}
           </section>}</>} </div>
         {waitingForOpenwrt && <div className="verification-controls"><div className="form-grid"><label>{t.host}<input disabled={busy} value={host} onChange={e => setHost(e.target.value)} autoComplete="off"/></label><label>{t.password}<input disabled={busy} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off"/></label></div>{tx.choices.method !== 'uninstall' && <p className="device-hint login-hint">{['update','boot'].includes(tx.choices.method) ? t.existingLogin : t.defaultLogin}</p>}{tx.details?.verification_error && <p className="verification-error" role="status">{tx.details.verification_error}</p>}</div>}
-        {tx.status !== 'completed' && !waitingNV && !waitingOnline && <div className="actions">{waitingForOpenwrt && <Button disabled={busy || !host.trim()} onClick={() => task(async () => (await request<{accepted:boolean}>('verify_openwrt', {transaction:tx.id, host:host.trim(), password})).accepted, t.verificationRequested)}><CheckCircle2 size={16}/>{t.confirmOpenwrt}</Button>}{active ? <Button variant="outline" disabled={busy} onClick={() => task(async () => (await request<{accepted:boolean}>('cancel')).accepted, t.pauseRequested)}><Pause size={16}/>{t.pause}</Button> : <Button disabled={busy || tx.error?.retryable === false} onClick={() => start('retry')}>{t.retry}<RotateCcw size={16}/></Button>}</div>
+        {tx.status !== 'completed' && !waitingNV && !waitingOnline && <div className="actions">{manualRestart && <Button disabled={busy || restartPending} onClick={rebootDevice}>{restartPending ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>} {restartPending ? t.rebootSending : t.rebootDevice}</Button>}{waitingForOpenwrt && <Button variant={manualRestart ? "outline" : "default"} disabled={busy || restartPending || !host.trim()} onClick={() => task(async () => (await request<{accepted:boolean}>('verify_openwrt', {transaction:tx.id, host:host.trim(), password})).accepted, t.verificationRequested)}><CheckCircle2 size={16}/>{t.confirmOpenwrt}</Button>}{active ? <Button variant="outline" disabled={busy} onClick={() => task(async () => (await request<{accepted:boolean}>('cancel')).accepted, t.pauseRequested)}><Pause size={16}/>{t.pause}</Button> : <Button disabled={busy || tx.error?.retryable === false} onClick={() => start('retry')}>{t.retry}<RotateCcw size={16}/></Button>}</div>
         }
         <div className="backup-actions"><Button disabled={busy} variant="outline" onClick={exportBackup}><Download size={16}/>{t.exportBackup}</Button><Button disabled={busy} variant="ghost" onClick={openData}><FolderOpen size={16}/>{t.openData}</Button></div>
       </>}
