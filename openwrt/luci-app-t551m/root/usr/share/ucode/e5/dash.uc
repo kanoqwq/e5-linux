@@ -31,6 +31,22 @@ export function sim_state(slot) {
     if(row.present===true)return row.registration=='locked'?'locked':'ready';
     return 'unknown';
 };
+// Equipment identity is independent of SIM presence and the selected view.
+// HTTP reads use RAM files; only this bounded background worker uses the AT owner.
+let equipment_job=null;
+function equipment(atd,slots) {
+    let dir='/run/unisoc-modem-equipment', boot_id=rd('/proc/sys/kernel/random/boot_id');
+    let valid=boot_id!='' && rd(dir+'/boot_id')==boot_id;
+    let values=map(['0','1'],n=>valid && match(rd(dir+'/imei'+n),/^[0-9]{15}$/)?rd(dir+'/imei'+n):null);
+    let stamp=fs.stat(ROOT+dir+'/attempt')?.mtime, age=stamp==null?null:time()-stamp;
+    if(atd && boot_id!='' && !equipment_job && (values[0]==null || (slots=='2' && values[1]==null)) &&
+       (!valid || age==null || age<0 || age>=60)) {
+        equipment_job=uloop.process('/bin/sh',['/usr/libexec/unisoc-modem/dashboard-equipment'],{
+            PATH:'/usr/sbin:/usr/bin:/sbin:/bin',MU300_EQUIPMENT_SLOTS:slots,T551M_AT_CHANNEL:'6'
+        },()=>{equipment_job=null;});
+    }
+    return values;
+};
 function call(bus,o,m) { return bus?.call(o,m,{}) || {}; }
 function net(dev) {
     dev=device(dev);
@@ -248,7 +264,7 @@ export function info(slot) {
             clients:stations.rows,clients_n:stations.count},
         lan:{leases:length(leases),ip:address(rows4,lan,false),list:leases},
         modem:{alive:cached.alive && exists('/dev/wwan0at0')?1:0,atd:atd?1:0,data_paused:!viewing || !wan.up?1:0,viewing_data_sim:viewing?1:0,data_sim:data_slot in ['0','1']?int(data_slot):null,
-            sims:map(['0','1'],n=>({slot:int(n),state:atd?sim_state(n):'unknown'}))},
+            imeis:equipment(atd,'2'),sims:map(['0','1'],n=>({slot:int(n),state:atd?sim_state(n):'unknown'}))},
         boot:boot(),capabilities:{dualboot:executable('/opt/e5/e5-next-boot')?1:0},
         conns:conntrack(),traffic:obj('/run/unisoc-modem-traffic/view'+(slot in ['0','1']?'-sim'+slot:'')+'.json')};
 };

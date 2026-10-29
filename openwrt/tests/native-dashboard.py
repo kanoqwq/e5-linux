@@ -12,6 +12,39 @@ class Dashboard(unittest.TestCase):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.root=Path(temp.name);self.s=Snapshot(self.root)
 
+    def test_equipment_queries_are_background_and_failed_reads_are_throttled(self):
+        # E5's existing dual-SIM backend does not use MU300's sim_slots option.
+        config=self.s.config/'unisoc_modem'
+        config.write_text(config.read_text().replace(" option sim_slots '2'\n",''))
+        self.s.write('proc/sys/kernel/random/boot_id','fixture-boot')
+        self.s.write('run/t551m-at2/cmd.sock','socket')
+        self.s.write('proc/net/unix','/run/t551m-at2/cmd.sock')
+        self.s.run(slot='1')
+        job=json.loads((self.root/'spawn.json').read_text())
+        self.assertEqual(job['exe'],'/bin/sh')
+        self.assertEqual(job['args'],['/usr/libexec/unisoc-modem/dashboard-equipment'])
+        self.assertEqual(job['env']['MU300_EQUIPMENT_SLOTS'],'2')
+        (self.root/'spawn.json').unlink()
+        self.s.write('run/unisoc-modem-equipment/boot_id','fixture-boot')
+        attempt=self.s.write('run/unisoc-modem-equipment/attempt','')
+        os.utime(attempt,(self.s.now,self.s.now))
+        self.s.run(slot='0')
+        self.assertFalse((self.root/'spawn.json').exists(),'failed IMEI reads must not query on every page poll')
+        os.utime(attempt,(1,1))
+        self.s.run(slot='0')
+        self.assertTrue((self.root/'spawn.json').exists(),'failed reads should eventually retry')
+
+    def test_dual_equipment_cache_and_boot_isolation(self):
+        self.s.write('run/unisoc-modem-equipment/boot_id','fixture-boot')
+        self.s.write('run/unisoc-modem-equipment/imei0','866100000000408')
+        self.s.write('run/unisoc-modem-equipment/imei1','866100000000409')
+        result=self.s.run(slot='1')
+        self.assertEqual(result['modem']['imeis'],['866100000000408','866100000000409'])
+        self.s.write('run/unisoc-modem-equipment/imei1','ERROR')
+        self.assertEqual(self.s.run(slot='1')['modem']['imeis'],['866100000000408',None])
+        self.s.write('proc/sys/kernel/random/boot_id','other-boot')
+        self.assertEqual(self.s.run()['modem']['imeis'],[None,None])
+
     def test_snapshot_and_per_sim_isolation(self):
         self.s.write('sys/class/power_supply/battery/capacity','9')
         self.s.write('sys/class/power_supply/battery/status','Charging')

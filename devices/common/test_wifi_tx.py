@@ -50,6 +50,8 @@ STUBS = r'''
 #define spin_unlock_bh(...) ((void)0)
 struct sprd_peer_entry { int ip_acquired,ba_tx_done_map,vowifi_enabled,vowifi_pkt_cnt; };
 struct sprd_hif { struct sprd_peer_entry peer_entry[8]; struct { int tx_arp_num,tx_multicast; } stats; };
+/* BA lifecycle is tested separately using its real controller and work code. */
+static inline void sc2355_ba_reset(struct sprd_hif *h,unsigned char lut) { h->peer_entry[lut].ba_tx_done_map=0; }
 struct sprd_priv { struct sprd_hif hif; };
 struct sprd_vif { struct sprd_priv *priv; int mode,prwise_crypto; };
 struct net_device { struct sprd_vif *vif; };

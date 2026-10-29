@@ -189,6 +189,7 @@ static void iface_notify_deinit(struct sprd_priv *priv)
          '\t\twl_info("Try to report assert a %d time \\n", hif->report_try);')
 
     runpy.run_path(str(Path(__file__).with_name('common') / 'wifi-tx.py'))['apply'](kernel)
+    runpy.run_path(str(Path(__file__).with_name('common') / 'wifi-ba.py'))['apply'](kernel)
 
 
 if __name__ == '__main__':
