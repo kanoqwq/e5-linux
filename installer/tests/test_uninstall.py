@@ -318,11 +318,11 @@ class Journal(unittest.TestCase):
         self.adb.shell.assert_not_called()
 
     def test_real_boot_staging_honors_cancel_after_verified_inactive_write(self):
-        for family,slot in (('e5','a'),('mu300','a'),('mu300','b')):
+        for family,slot,command in (('e5','a',b''),('mu300','a',b''),('mu300','b',b''),('e5','a',b'bootonce-bootloader'),('mu300','a',b'bootonce-bootloader'),('mu300','b',b'bootonce-bootloader')):
             with self.subTest(family=family,slot=slot):
                 self.configure(family,slot)
                 context=self.plan();base=boot(family)
-                root=Path(self.temp.name)/('package-'+family+'-'+slot);(root/'files').mkdir(parents=True)
+                root=Path(self.temp.name)/('package-'+family+'-'+slot+('-bootloader' if command else ''));(root/'files').mkdir(parents=True)
                 (root/'files/boot.img').write_bytes(base)
                 self.adapter.root=root
                 self.adapter.legacy=SimpleNamespace(payload_file=lambda root,name:root/'files/boot.img')
@@ -330,8 +330,14 @@ class Journal(unittest.TestCase):
                 def backup(_device):
                     folder=context.directory/'backup';folder.mkdir()
                     android=bytearray(base);android[44:1580]=bytes(1536)
-                    (folder/('boot_'+slot+'.bin')).write_bytes(android);(folder/('boot_'+other+'.bin')).write_bytes(base)
-                    (folder/'misc.bin').write_bytes(bytes(2048)+android_bc(slot)+bytes(2016))
+                    # Synthetic boot bodies are zero padding. Keep them sparse
+                    # instead of allocating hundreds of MiB in the WSL VHDX.
+                    for name,data in (('boot_'+slot+'.bin',android),('boot_'+other+'.bin',base)):
+                        assert not data[16384:-512].strip(b'\0')
+                        with (folder/name).open('wb') as stream:
+                            stream.truncate(len(data));stream.write(data[:16384])
+                            stream.seek(len(data)-512);stream.write(data[-512:])
+                    (folder/'misc.bin').write_bytes(command.ljust(32,b'\0')+bytes(2016)+android_bc(slot)+bytes(2016))
                 self.adapter.backup=Mock(side_effect=backup)
                 def read(command):
                     if 'by-name/boot_'+other in command:return base[:4096] if 'count=8' in command else base[-512:]
@@ -363,6 +369,11 @@ class Journal(unittest.TestCase):
                 size=struct.unpack_from('<I',generated,12)[0]
                 files={n:b for archive in archives(generated[8192:8192+size]) for n,b,_ in entries(archive)}
                 self.assertIn(b'--wipe_data',files['openwrt-uninstall/recovery-bcb'])
+                self.assertEqual(files['openwrt-uninstall/before-bcb'],bytes(2048))
+                saved=(context.directory/'backup/misc.bin').read_bytes()
+                self.assertEqual(saved[:32],command.ljust(32,b'\0'))
+                if command:
+                    self.assertIn('of=/dev/block/by-name/misc bs=1 count=32',critical)
 
     def test_other_device_is_refused_before_layout_or_boot_writes(self):
         context=self.plan();self.adapter.probe=Mock(return_value={**self.device,'cid':'0'*32})
@@ -384,6 +395,20 @@ class Journal(unittest.TestCase):
         self.assertNotIn('of=/dev/block/mmcblk0 ',command)
         self.assertIn('seek=2048 count=32',command)
         self.assertFalse(record['unsafe'])
+
+    def test_final_boot_clears_only_a_superseded_bootloader_command(self):
+        context=self.plan();record=context.record;record['uninstall_android_sha256']='c'*64
+        self.adb.read=Mock(return_value=android_bc())
+        self.adb.call=Mock()
+        self.adb.shell=Mock(side_effect=['c'*64+'  boot_a\n'+'c'*64+'  boot_b\n','',''])
+        raw=b'bootonce-bootloader'.ljust(32,b'\0')+bytes(2016)
+        with patch('backend.uninstall.push_chunks'):
+            Uninstaller(None,context,self.adapter).finish_boot(self.device,bcb=raw)
+        command=self.adb.shell.call_args_list[-1].args[0]
+        self.assertIn('of=/dev/block/by-name/misc bs=1 count=32',command)
+        self.assertNotIn('wipe_data',command)
+        self.assertNotIn('of=/dev/block/by-name/boot_a',command)
+        self.assertEqual(record['effects']['uninstall-final-boot']['state'],'done')
 
 
 class BootRequest(unittest.TestCase):
