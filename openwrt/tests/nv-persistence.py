@@ -283,6 +283,63 @@ class NVTests(unittest.TestCase):
         (self.root/'.e5-update').mkdir();(self.root/'.e5-update/request.ready').touch()
         with self.assertRaisesRegex(nv.NVError,'nv_busy'):self.manager.sync(request)
 
+    def test_prepared_retry_snapshots_do_not_bypass_armed_or_live_updates(self):
+        pending=self.root/'.e5-update';pending.mkdir()
+        (pending/'request.ready').write_text('previous preparation stopped before boot write\n')
+        before={n:p.read_bytes() for n,p in self.devices.items()}
+        working={p.name:p.read_bytes() for p in self.store.iterdir() if p.is_file()}
+        command=[sys.executable,str(SOURCE),'archive','--lock','--gzip','--root',str(self.root)]
+        for _ in range(2):
+            result=subprocess.run(command,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertTrue(nv.verify_preserved(self.restore(result.stdout)))
+        with nv.maintenance_lock(self.root,snapshot=True):
+            result=subprocess.run(command,capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn(b'BlockingIOError',result.stderr)
+        (pending/'request').write_text('armed\n')
+        result=subprocess.run(command,capture_output=True)
+        self.assertNotEqual(result.returncode,0);self.assertIn(b'nv_busy',result.stderr)
+        self.assertEqual(before,{n:p.read_bytes() for n,p in self.devices.items()})
+        self.assertEqual(working,{p.name:p.read_bytes() for p in self.store.iterdir() if p.is_file()})
+        self.assertTrue((pending/'request.ready').exists());self.assertTrue((pending/'request').exists())
+
+    def test_real_pc_backup_retries_prepared_request_without_original_fallback(self):
+        spec=importlib.util.spec_from_file_location('nv_retry_update',TOP/'tools/e5-update.py')
+        updater=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater)
+        updater.GUI=SimpleNamespace(backup_base=lambda:str(self.root/'pc'),
+            confirm_nv_recovery=unittest.mock.Mock(side_effect=AssertionError('must keep working NV')))
+        pending=self.root/'.e5-update';pending.mkdir();(pending/'request.ready').touch()
+        stage=self.root/'stage';stage.mkdir();shutil.copyfile(SOURCE,stage/'nv-persistence.py')
+        calls=[]
+        def execute(client,command):
+            calls.append(command)
+            command=command.replace('/opt/e5/nv',str(self.store)).replace(' --lock',' --lock --root '+str(self.root))
+            result=subprocess.run(['sh','-ec',command],capture_output=True,text=True)
+            if result.returncode:raise RuntimeError(result.stderr)
+            return result.stdout
+        def read(command,**options):
+            self.assertEqual(command,'cat '+str(stage/'nv.tar'))
+            out=io.BytesIO((stage/'nv.tar').read_bytes());out.channel=SimpleNamespace(recv_exit_status=lambda:0)
+            return None,out,io.BytesIO()
+        with patch.object(updater,'execute',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):
+            for _ in range(2):
+                result=updater.save_nv_backup(SimpleNamespace(exec_command=read),str(stage),'e5',compress=True)
+                self.assertTrue(nv.verify_preserved(self.restore(result.read_bytes())))
+        self.assertEqual(len(calls),2);self.assertFalse(any('factory-archive' in s for s in calls))
+
+    def test_busy_or_transport_errors_are_not_nv_corruption(self):
+        spec=importlib.util.spec_from_file_location('nv_busy_update',TOP/'tools/e5-update.py')
+        updater=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater)
+        updater.GUI=SimpleNamespace(confirm_nv_recovery=unittest.mock.Mock())
+        for error in (RuntimeError('NVError: nv_busy'),RuntimeError('BlockingIOError: unavailable'),
+                      TimeoutError('SSH timed out'),RuntimeError('device command failed: executable missing')):
+            with self.subTest(error=str(error)),patch.object(updater,'execute',side_effect=error) as execute:
+                with self.assertRaises((ValueError,RuntimeError,TimeoutError)):
+                    updater.save_nv_backup(None,'/fixture','e5')
+                self.assertEqual(execute.call_count,1)
+        updater.GUI.confirm_nv_recovery.assert_not_called()
+
     def snapshot(self):
         output=io.BytesIO();self.assertTrue(nv.archive(self.root,output));return output.getvalue()
 
@@ -430,7 +487,7 @@ class NVTests(unittest.TestCase):
         calls=[]
         def execute(client,command):
             calls.append(command)
-            if ' archive --lock' in command:raise RuntimeError('working checksum failed')
+            if ' archive --lock' in command:raise RuntimeError('NVError: nv_invalid_checksum')
             if ' factory-archive ' in command:return 'NV-BACKUP '+sha+'\n'
             return ''
         with patch.object(updater,'execute',side_effect=execute),contextlib.redirect_stdout(io.StringIO()):

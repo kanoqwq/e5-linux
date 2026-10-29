@@ -126,6 +126,16 @@ def save_nv_backup(client, stage, profile, compress=False):
             'printf "NV-BACKUP "; sha256sum '+shlex.quote(stage+'/nv.tar')+' | cut -d" " -f1; '
             'else echo NV-NONE; fi')
     except Exception as error:
+        detail = str(error)
+        if re.search(r'\b(?:nv_busy|nv_writer_busy|BlockingIOError)\b', detail):
+            raise ValueError('Another update or NV operation is active; retry after it finishes / '
+                             '更新或 NV 操作正在执行，请在完成后重试；未改用原机 NV') from error
+        # Only an identified working-copy integrity/source error can offer
+        # original-NV recovery. Connectivity, locking and program errors do
+        # not establish that the working NV is damaged.
+        if not re.search(r'\bnv_(?:invalid_(?:header|size|checksum|runtime)|origin_unavailable|'
+                         r'work_unavailable|snapshot_changed)\b', detail):
+            raise
         # Verify a separate source first. A mutex/transport/original-NV failure
         # cannot be bypassed by merely clicking a recovery button.
         try:

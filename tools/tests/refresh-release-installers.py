@@ -48,6 +48,10 @@ class Refresh(unittest.TestCase):
                     (TOP/'openwrt/device-flash-boot.sh').read_bytes().replace(b'\r\n',b'\n'))
                 self.assertEqual(z.read('files/storage.sh'),
                     (TOP/'boot/storage.sh').read_bytes().replace(b'\r\n',b'\n'))
+                self.assertEqual(z.read('files/nv-persistence.py'),
+                    (TOP/'openwrt/luci-app-t551m/root/usr/lib/e5/nv_persistence.py').read_bytes().replace(b'\r\n',b'\n'))
+                self.assertEqual(z.read('scripts/tools/e5-update.py'),
+                    (TOP/'tools/e5-update.py').read_bytes().replace(b'\r\n',b'\n'))
                 self.assertEqual(json.loads(z.read('files/INSTALLER-REVISION.json')),meta)
                 sums={n:h for line in z.read('files/SHA256SUMS').decode().splitlines() for h,n in [line.split(None,1)]}
                 self.assertEqual(set(sums),set(z.namelist())-{'files/SHA256SUMS'})

@@ -34,6 +34,8 @@ def refresh(source,target,tools,revision):
         'scripts/installer/gpt-api.py':'installer/backend/gpt.py',
         'files/storage.sh':'boot/storage.sh',
         'files/device-flash-boot.sh':'openwrt/device-flash-boot.sh',
+        'files/nv-persistence.py':'openwrt/luci-app-t551m/root/usr/lib/e5/nv_persistence.py',
+        'scripts/tools/e5-update.py':'tools/e5-update.py',
     }.items():
         replacement[name]=(TOP/path).read_bytes().replace(b'\r\n',b'\n')
     with zipfile.ZipFile(source) as original:
