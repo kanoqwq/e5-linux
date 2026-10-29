@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,13 @@ tool=runpy.run_path(str(TOP/'tools/package-diff-studio.py'))
 
 
 class DiffPackaging(unittest.TestCase):
+    def test_real_cli_attaches_the_tool_instead_of_exiting_without_work(self):
+        result=subprocess.run([sys.executable,str(TOP/'tools/package-diff-studio.py'),
+            '--package',str(self.root)],capture_output=True,text=True,encoding='utf-8')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertTrue((self.root/'diff-tool.json').is_file())
+        self.assertTrue((self.root/'OpenWrt-Diff-Studio.exe').is_file())
+
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)/'package'
         (self.root/'docs').mkdir(parents=True);(self.root/'START-HERE.md').write_text('Installer guide\n')

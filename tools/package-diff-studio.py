@@ -73,3 +73,19 @@ def attach(package):
                      '完整解压后打开对应程序；与安装器共用 tools 目录，请勿单独移动 EXE 或 APP。'
                      '选择旧、新完整包生成更新补丁；操作说明见 [DIFF-STUDIO.md](docs/DIFF-STUDIO.md)。\n')
     return manifest
+
+
+def main(argv=None):
+    import argparse
+    import runpy
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--package',type=Path,required=True)
+    parser.add_argument('--prepare',action='store_true')
+    args=parser.parse_args(argv)
+    args.package.mkdir(parents=True,exist_ok=True)
+    if args.prepare:
+        runpy.run_path(str(TOP/'installer/package_gui.py'))['attach'](args.package)
+    attach(args.package)
+
+
+if __name__=='__main__':main()
