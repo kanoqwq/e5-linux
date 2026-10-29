@@ -12,11 +12,13 @@
 # and a half-written boot_b only costs its two tries before Android.
 set -eu
 URL=${1:?url} WANT=${2:?sha256} MB=${3:?MiB}
+HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+[ -r "$HERE/storage.sh" ] || { echo 'Shared storage helper missing; nothing written' >&2; exit 1; }
+. "$HERE/storage.sh"
 
 part() {
-    for u in /sys/class/block/mmcblk*p*/uevent; do
-        grep -qx "PARTNAME=$1" "$u" 2>/dev/null && { echo "/dev/$(basename "$(dirname "$u")")"; return; }
-    done
+    node=$(e5_storage_part "$1" "${2:-}") || return 1
+    printf '/dev/%s\n' "$node"
 }
 BC_B=/run/e5linux/misc-bc-slot-b-trial.bin
 [ "$(wc -c < "$BC_B" 2>/dev/null)" = 32 ] || {
@@ -35,8 +37,16 @@ declared=$(cat /etc/e5/linux-slot 2>/dev/null || true)
 [ -z "$declared" ] || [ "$declared" = "$linux_slot" ] || {
     echo 'Linux slot metadata conflicts; nothing written' >&2; exit 1;
 }
-BOOTB=$(part boot_$linux_slot)
-MISC=$(cat /run/e5linux/misc-dev 2>/dev/null || part misc)
+MISC=$(cat /run/e5linux/misc-dev 2>/dev/null || part misc) || {
+    echo 'Internal misc partition unavailable or ambiguous; nothing written' >&2; exit 1;
+}
+MISC=$(readlink -f "$MISC")
+disk=$(e5_storage_parent "$MISC") && e5_storage_kind "$disk" >/dev/null || {
+    echo 'misc is not on a supported internal eMMC/UFS disk; nothing written' >&2; exit 1;
+}
+BOOTB=$(part "boot_$linux_slot" "$disk") || {
+    echo "boot_$linux_slot unavailable or ambiguous on $disk; nothing written" >&2; exit 1;
+}
 [ -b "$BOOTB" ] && [ -b "$MISC" ] || { echo "Linux boot or misc not found" >&2; exit 1; }
 
 echo "== writing boot_$linux_slot ($BOOTB)"

@@ -44,6 +44,10 @@ class Refresh(unittest.TestCase):
                     self.assertEqual(tar.extractfile('usr/bin/flock').read(),b'new lock tool')
                     self.assertNotIn('lib/base.so',tar.getnames())
                 self.assertIn(b'flock',z.read('files/part-write.sh'))
+                self.assertEqual(z.read('files/device-flash-boot.sh'),
+                    (TOP/'openwrt/device-flash-boot.sh').read_bytes().replace(b'\r\n',b'\n'))
+                self.assertEqual(z.read('files/storage.sh'),
+                    (TOP/'boot/storage.sh').read_bytes().replace(b'\r\n',b'\n'))
                 self.assertEqual(json.loads(z.read('files/INSTALLER-REVISION.json')),meta)
                 sums={n:h for line in z.read('files/SHA256SUMS').decode().splitlines() for h,n in [line.split(None,1)]}
                 self.assertEqual(set(sums),set(z.namelist())-{'files/SHA256SUMS'})

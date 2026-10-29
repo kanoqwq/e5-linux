@@ -33,6 +33,7 @@ def refresh(source,target,tools,revision):
         'scripts/installer/storage-lib.sh':'boot/storage.sh',
         'scripts/installer/gpt-api.py':'installer/backend/gpt.py',
         'files/storage.sh':'boot/storage.sh',
+        'files/device-flash-boot.sh':'openwrt/device-flash-boot.sh',
     }.items():
         replacement[name]=(TOP/path).read_bytes().replace(b'\r\n',b'\n')
     with zipfile.ZipFile(source) as original:
