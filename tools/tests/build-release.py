@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import runpy
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import zipfile
 TOP = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('build_release', TOP / 'tools/build-release.py')
 build = importlib.util.module_from_spec(spec); spec.loader.exec_module(build)
+verify_android=runpy.run_path(str(TOP/'installer/package_android.py'))['verify_archive']
 
 
 class Layout(unittest.TestCase):
@@ -102,6 +104,9 @@ class Ownership(unittest.TestCase):
 class Archives(unittest.TestCase):
     def fixture(self, path, *, corrupt=False, extra=None):
         files = {'files/boot.img': b'boot', 'files/openwrt.ext4.gz': b'root', 'OpenWrt-Installer.py': b'cli'}
+        files['OpenWrt-Tools.apk']=b'fixture ARM64 release'
+        files['docs/GUI-BUILD-android.json']=json.dumps({'protocol':1,'platform':'android-aarch64','debug':False,
+            'signing':{'alias':'fixture'},'files':{'OpenWrt-Tools.apk':hashlib.sha256(files['OpenWrt-Tools.apk']).hexdigest()}}).encode()
         runtime = {'OpenWrt-Diff-Studio.exe': b'native diff', 'OpenWrt-Diff-Studio.py': b'diff CLI',
                    'OpenWrt-Diff-Studio.app/Contents/MacOS/openwrt-installer': b'mac diff',
                    'tools/backend/openwrt-backend.exe': b'Windows backend',
@@ -160,7 +165,7 @@ class TaskState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.object(build, 'TOP', Path(folder)), \
              patch.object(build.os, 'geteuid', return_value=0), patch.object(build, 'input_check'), \
              patch.object(build.runpy, 'run_path', return_value={
-                'identify': lambda *a: {'private_version':'r-test','source_fingerprint':'same'}}):
+                'identify': lambda *a: {'private_version':'r-test','source_fingerprint':'same'},'verify_archive':verify_android}):
             task = build.Task(Path(folder) / 'native', 'fixture')
             with patch.object(task, 'run', side_effect=lambda model,args:self.fake_assembly(task,model,args)):
                 build.package(task, {}, {'e5': {}, 'k1': {}})
@@ -178,7 +183,7 @@ class TaskState(unittest.TestCase):
             identify = unittest.mock.Mock(side_effect=[
                 {'private_version':'r-test','source_fingerprint':'before'},
                 {'private_version':'r-test','source_fingerprint':'after'}])
-            with patch.object(build.runpy, 'run_path', return_value={'identify': identify}):
+            with patch.object(build.runpy, 'run_path', return_value={'identify': identify,'verify_archive':verify_android}):
                 task = build.Task(Path(folder) / 'native', 'fixture')
                 with patch.object(task, 'run', side_effect=lambda model,args:self.fake_assembly(task,model,args)):
                     with self.assertRaisesRegex(ValueError, 'sources changed'):

@@ -164,8 +164,10 @@ def digest(path):
     return h.hexdigest()
 
 
-def verify_archive(path):
+def verify_archive(path, require_android=False):
     with zipfile.ZipFile(path) as archive:
+        if require_android:
+            runpy.run_path(str(TOP/'installer/package_android.py'))['verify_archive'](archive)
         names = archive.namelist()
         if len(names) != len(set(names)) or archive.testzip():
             raise ValueError('ZIP duplicate entries or CRC failure: ' + str(path))
@@ -267,7 +269,7 @@ def package(task, common, rows):
         if len(matches) != 1:
             raise ValueError('Expected one completed archive for ' + model)
         archive = matches[0]
-        verify_archive(archive)
+        verify_archive(archive,require_android=True)
         assets.append({'profile': model, 'file': archive.name, 'bytes': archive.stat().st_size,
                        'sha256': digest(archive)})
         clean_stage(task.workspace, model)
@@ -310,7 +312,7 @@ def refresh_installers(task, common, rows, source):
         task.run('installer-tools',[sys.executable,TOP/'openwrt/prepare-ext4-tools.py','--root',common['base'],'--include-lock','--out',tools])
         for profile,path in selected.items():
             target=pending/(path.stem+'-installer-g'+before['source_commit'][:8]+'.zip')
-            refresh(path,target,tools,before,native=native);verify_archive(target)
+            refresh(path,target,tools,before,native=native);verify_archive(target,require_android=True)
             checksum=digest(target)
             (pending/(target.name+'.sha256')).write_text(checksum+'  '+target.name+'\n')
             outputs.append({'profile':profile,'file':target.name,'bytes':target.stat().st_size,'sha256':checksum})
