@@ -19,9 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          submodules: recursive
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
+          submodules: recursive
           repository: Enceka/linux-lts-e5
           ref: 020b970e351eee3887e6caaf2d653926e7086e44
           path: linux-lts-e5

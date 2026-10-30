@@ -1,2 +1,0 @@
--keep class cn.kanokano.openwrt.mobile.** { *; }
--keep class com.chaquo.python.** { *; }

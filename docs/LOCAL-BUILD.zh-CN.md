@@ -180,3 +180,10 @@ sudo python3 tools/build-release.py clean-staging --workspace /home/kano/openwrt
 执行无法被这把锁管住，所以本地构建必须经过此入口；CI 在独立 runner 继续原流程。
 
 畅行60（`changxing60`，P720S20 UFS 4Kn）已接入相同构建入口；内核仍用登记的 `tools/build-profile-kernel.py --profile changxing60`，正式包用 `--profiles changxing60`。Windows/Mac 安装器必须包含新的存储库；见 [安装接入与验收边界](CHANGXING60-INSTALL.zh-CN.md)。
+
+
+## 公共安装器子模块
+
+installer/ 现在固定引用 https://github.com/kanoqwq/openwrt-tools 的提交。新检出先执行 git submodule update --init --recursive。共享源码、Android 及独立工具构建方法见 installer/docs/BUILD.zh-CN.md；E5/MU300 的 NV、UFS 身份和启动流程继续分开处理。请先在子模块提交，再在父仓库更新 gitlink；不要重新复制一整份安装器。
+
+两个父仓库可通过 OPENWRT_GUI_ARTIFACT 与 OPENWRT_GUI_MACOS_ARTIFACT 复用同一份已校验交付件，无需各编译一次；首次拆分后旧 GUI 指纹应正常拒绝，不能修改旧 build.json 绕过。tools/release-index.py、tools/build-release-index.py、tools/package-diff-studio.py 保留为兼容入口，实际代码由子模块提供。

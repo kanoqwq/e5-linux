@@ -62,6 +62,7 @@ jobs:
       # missing archive instead of the original build failure.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          submodules: recursive
           fetch-depth: 0
           persist-credentials: false
       - name: Check bootstrap configuration
@@ -73,6 +74,7 @@ jobs:
           [[ "$INPUTS_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo '::error::Set E5_CI_INPUTS_SHA256 to its SHA-256 (docs/RELEASE.md).'; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          submodules: recursive
           repository: Enceka/linux-lts-e5
           ref: ${{ inputs.kernel_ref || vars.E5_KERNEL_REF || 'e5-6.18' }}
           path: linux-lts-e5
@@ -80,12 +82,14 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          submodules: recursive
           repository: Enceka/infoscreen
           ref: ${{ inputs.infoscreen_ref || vars.E5_INFOSCREEN_REF || 'main' }}
           path: ci/infoscreen
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          submodules: recursive
           repository: Enceka/infoscreen-plugins
           ref: ${{ inputs.plugins_ref || vars.E5_PLUGINS_REF || 'main' }}
           path: ci/infoscreen-plugins

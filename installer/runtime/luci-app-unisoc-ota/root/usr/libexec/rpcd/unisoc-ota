@@ -1,2 +1,0 @@
-#!/bin/sh
-exec sh /usr/lib/unisoc-ota/proxy.sh "$@"

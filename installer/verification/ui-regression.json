@@ -1,8 +1,0 @@
-[
-  {
-    "test": "online_shrink_smoke",
-    "exit": 0,
-    "output": "PASS: zh/en, small viewport, default online, explicit format, cancel, nonce/yes and new-plan confirmation\r\n",
-    "error": ""
-  }
-]
