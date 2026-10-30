@@ -170,12 +170,15 @@ class LegacyUpdate(unittest.TestCase):
         with patch('paramiko.SSHClient', return_value=client), patch.dict(os.environ, {'MU300_SSH_PASSWORD':'fixture-only'}), redirect_stdout(io.StringIO()):
             try:
                 if entry == 'cli':
-                    spec = importlib.util.spec_from_file_location('hidden_area_cli_fixture', Path(__file__).resolve().parents[2]/'desktop/installer.py')
-                    cli = importlib.util.module_from_spec(spec);spec.loader.exec_module(cli)
+                    spec = importlib.util.spec_from_file_location('hidden_area_cli_fixture', __import__('firmware_sources').firmware_root('mu300')/'desktop/installer.py')
+                    cli = importlib.util.module_from_spec(spec)
+                    with patch.object(sys,'path',[str(__import__('firmware_sources').firmware_root('mu300')),*sys.path]):
+                        spec.loader.exec_module(cli)
                     for key, value in vars(adapter.legacy).items():
                         if key != 'update':setattr(cli, key, value)
                     cli.GUI = None
-                    cli.update(SimpleNamespace(host='192.168.78.1'), self.root)
+                    with patch.object(sys,'path',[str(__import__('firmware_sources').firmware_root('mu300')),*sys.path]):
+                        cli.update(SimpleNamespace(host='192.168.78.1'), self.root)
                 else:adapter.execute()
             except ValueError as caught:error = caught
         client.close.assert_called_once()
@@ -196,7 +199,7 @@ class LegacyUpdate(unittest.TestCase):
         self.assertTrue(all(p.startswith('/mnt/mu300-disk/.mu300-desktop-') for p in captured))
 
     def test_actual_compatible_cli_uses_same_hidden_area_update(self):
-        if not (Path(__file__).resolve().parents[2]/'desktop/installer.py').is_file():
+        if not (__import__('firmware_sources').firmware_root('mu300')/'desktop/installer.py').is_file():
             self.skipTest('MU300 CLI source is tested in its repository')
         _, commands, captured, boot, error = self.execute_update(entry='cli')
         self.assertIsNone(error)

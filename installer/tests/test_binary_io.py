@@ -203,5 +203,43 @@ class LegacyGUI(unittest.TestCase):
         self.android.serial='other'
         with self.assertRaises(ValueError):self.android.read('bounded read')
 
+    def test_actual_desktop_preflight_after_online_resize(self):
+        import importlib.util
+        from backend import gpt
+        from backend.online_shrink import OnlineShrink
+        original,updated = self.online_backup_fixture(slot='b')
+        from firmware_sources import firmware_root
+        entry = firmware_root('mu300')/'desktop/installer.py'
+        spec = importlib.util.spec_from_file_location('handoff_desktop',entry)
+        desktop = importlib.util.module_from_spec(spec);spec.loader.exec_module(desktop)
+        space = gpt.gpt_space(*updated,self.storage['DISK_SIZE'])
+        space.update(first=updated[0],last=updated[1])
+        android = SimpleNamespace(model='F50',slot='b',linux='a',serial='selected',
+            storage=lambda:self.storage,gpt=lambda _:space,
+            backup=lambda path,storage:self.adapter.backup_legacy(android,path,storage),prepare_payload=Mock())
+        args = SimpleNamespace(boot_openwrt=False,tf=False,resume=False,reinstall_part=False,
+            data=False,size='4',format_userdata=False,backup_dir=str(self.ctx.directory/'legacy-backups/reproduce'))
+        with patch.object(desktop,'Android',return_value=android),patch.object(desktop,'module'),\
+                patch.object(desktop,'GUI',self.adapter),patch.object(desktop,'free_write',return_value='verified') as writer:
+            # Reproduce the reported error through the real comparison, rather
+            # than a fake installer which never reads its backup GPT.
+            with patch.object(OnlineShrink,'installation_gpt',return_value=original):
+                with self.assertRaisesRegex(ValueError,'GPT changed during preflight'):
+                    desktop.install(args,self.root,{'kernel':'7.2'})
+            android.prepare_payload.assert_not_called();writer.assert_not_called()
+            args.backup_dir=str(self.ctx.directory/'legacy-backups/fixed')
+            self.assertEqual(desktop.install(args,self.root,{'kernel':'7.2'}),'verified')
+            android.prepare_payload.assert_called_once();writer.assert_called_once()
+            self.assertEqual(tuple((self.ctx.directory/'backup'/n).read_bytes()
+                for n in ('gpt-first.bin','gpt-last.bin')),original)
+            # A real on-disk GPT change must still stop before payload/write.
+            android.prepare_payload.reset_mock();writer.reset_mock()
+            space['first']=original[0];space['last']=original[1]
+            args.backup_dir=str(self.ctx.directory/'legacy-backups/changed')
+            with self.assertRaisesRegex(ValueError,'GPT changed during preflight'):
+                desktop.install(args,self.root,{'kernel':'7.2'})
+            android.prepare_payload.assert_not_called();writer.assert_not_called()
+
+
 
 if __name__=='__main__':unittest.main()

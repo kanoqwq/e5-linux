@@ -11,21 +11,10 @@ import sys
 
 
 def support_sources():
-    if getattr(sys, 'frozen', False):
-        folder = Path(sys._MEIPASS)
-    elif Path(__file__).with_name('boot.py').is_file():
-        folder = Path(__file__).parent
-    else:
-        folder = Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
-    result = {name:(folder/('ota_engine.py' if name == 'engine.py' and not (folder/name).is_file() else name)).read_bytes().replace(b'\r\n', b'\n') for name in ('engine.py', 'boot.py', 'rpc.py', 'proxy.sh')}
-    plugin = Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota'
-    for name, relative in (
-        ('unisoc-ota.js', 'htdocs/luci-static/resources/view/system/unisoc-ota.js'),
-        ('errors.js', 'htdocs/luci-static/resources/unisoc-ota/errors.js'),
-        ('unisoc-ota.json', 'root/usr/share/rpcd/acl.d/unisoc-ota.json')):
-        path = folder/name
-        if not path.is_file(): path = plugin/relative
-        result[name] = path.read_bytes().replace(b'\r\n', b'\n')
+    from .resources import resource
+    result = {name:resource(name).read_bytes().replace(b'\r\n',b'\n')
+              for name in ('engine.py','boot.py','rpc.py','proxy.sh','unisoc-ota.js','errors.js','unisoc-ota.json')}
+    folder = resource('engine.py').parent
     native = folder/'lz4raw-aarch64.so'
     if not native.is_file(): native = Path(__file__).resolve().parents[1]/'ota-native/lz4raw-aarch64.so'
     metadata = native.with_name('build.json')

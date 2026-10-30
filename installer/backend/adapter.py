@@ -14,13 +14,13 @@ import sys
 import time
 from types import SimpleNamespace
 
-from . import gpt, storage as storage_io
+from . import gpt, storage as storage_io, host
 from .state import Pending, RecoveryRequired, NVConfirmationRequired, atomic_json, sha
 from .transport import Adb, push_chunks
 from .boot_image import boot_installed_e5, boot_installed_mu300
 from .mu300_update import update_mu300
 from .diagnostics import DebugStream, traced
-from .model_compat import android_warning, runtime_warning, require_approval
+from .model_compat import android_warning, runtime_warning, mu300_android, mu300_runtime, require_approval
 
 
 def load(path, name):
@@ -88,11 +88,16 @@ class Adapter:
         self.legacy.input = self.console_input_unavailable
         if self.kind == 'e5':
             self.legacy.B, self.legacy.F, self.legacy.SCRIPTS = str(self.root), str(self.root/'files'), str(self.root/'scripts')
+            from .package import e5_profile
+            self.legacy.package_profile = lambda:e5_profile(self.root)
+            names = {'e5':'E5','t551m':'T551M','m8':'M8','t512n':'T512N','yuanhang41s':'Yuanhang41S','k1':'K1','lym10k':'LYM-10K','changxing60':'Changxing60'}
+            self.legacy.default_hotspot_name = lambda:names.get(self.package['profile'],self.package['profile'])+'-OpenWrt'
             # Old compatible package scripts must not retain their exact-hash
             # gate when selecting the already installed system.
             self.legacy.boot_openwrt = lambda args:boot_installed_e5(vars(self.legacy), self.adb.read)
         else:
             self.legacy.package_root = lambda: self.root
+            self.legacy.android_profile = self.confirm_mu300_model
             # Override older compatible packages too: no legacy binary codec
             # or second full device backup may run behind the GUI coordinator.
             self.legacy.Android.read = lambda android, command:self.read_legacy(android, command)
@@ -100,6 +105,8 @@ class Adapter:
         self.adb = None
         self.password = ''
         self.expected_ssh_key = None
+        if host.current() is not None:
+            host.current().bind_legacy(self)
         if self.ctx:
             if self.kind == 'e5':
                 original = self.legacy.adb
@@ -122,6 +129,8 @@ class Adapter:
 
     def confirm_nv_recovery(self, reason):
         if not self.ctx: raise RecoveryRequired('NV recovery confirmation context unavailable')
+        if self.ctx.record['package']['adapter'] != 'e5':
+            raise RecoveryRequired('Working-NV recovery is an E5-only operation')
         previous = self.ctx.record.get('nv_recovery', {})
         if previous.get('state') == 'confirmed': return True
         self.ctx.log(str(reason), level='warning', scope='nv-preservation')
@@ -148,11 +157,23 @@ class Adapter:
                           model_mismatch=warning)
             require_approval(self.ctx.record, actual)
 
+    def confirm_mu300_model(self, text, platform=''):
+        names = text.strip().splitlines()
+        model, board = names[0] if names else '', names[1] if len(names)>1 else ''
+        profile, warning = mu300_android(model, board, platform)
+        if warning:
+            if not self.ctx:
+                raise ValueError('Review and confirm the model warning in the installation plan / 请先在安装计划中输入 yes 确认机型差异')
+            actual = dict(self.ctx.record['device'],model=model,board=board,platform=platform,
+                          profile=profile,model_mismatch=warning)
+            require_approval(self.ctx.record,actual)
+        return profile
+
     def confirm_update_profile(self, profile):
         if not self.ctx:
             raise ValueError('Review the model warning in the update plan / 请先确认更新计划中的机型警告')
         actual = dict(self.ctx.record['device'], profile=profile, model=profile.upper(),
-                      model_mismatch=runtime_warning(self.package['profile'], profile))
+                      model_mismatch=(mu300_runtime(profile) if self.package['adapter']=='mu300' else runtime_warning(self.package['profile'], profile)))
         require_approval(self.ctx.record, actual)
 
     def console_input_unavailable(self, *_args, **_kwargs):
@@ -318,10 +339,12 @@ class Adapter:
             self.legacy.ANDROID_SLOT = device['slot'][1:]
             self.legacy.LINUX_SLOT = 'b' if device['slot'] == '_a' else 'a'
         else:
-            device['profile'] = self.legacy.android_profile(device['model'] + '\n' + properties['ro.product.device'], properties['ro.board.platform'])
+            device['platform'] = properties['ro.board.platform']
+            device['profile'], warning = mu300_android(device['model'],device['board'],device['platform'])
+            if warning: device['model_mismatch'] = warning
         # Trial boot uses only the boot signature, boot-chain check and misc.
         # Do not access the root filesystem to detect an installation.
-        script = storage_io.inventory_script(self.root)
+        script = storage_io.inventory_script(self.root, self.kind)
         if device.get('profile') == 'changxing60':
             script = self.legacy.storage_script() + script
         script += '\ncards=""; for p in /sys/class/block/mmcblk*; do k=${p##*/}; case $k in *p[0-9]*|*boot*) continue;; esac; [ "$(cat "$p/device/type" 2>/dev/null)" = SD ] && cards="$cards $k"; done; set -- $cards; if [ "$#" -eq 1 ]; then if [ -b /dev/block/"${1}p1" ]; then echo TF=/dev/block/"${1}p1"; elif [ -b /dev/block/"$1" ]; then echo TF=/dev/block/"$1"; fi; fi; true'

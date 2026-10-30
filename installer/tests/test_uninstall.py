@@ -457,7 +457,8 @@ class OfflineGpt(unittest.TestCase):
                     (path/'start').write_text(str(GIB//512))
                 (folder/'sys/class/block/mmcblk0/device/cid').write_text(IDENTITY)
                 (folder/'sys/class/block/mmcblk0/device/type').write_text('MMC')
-                storage = (Path(__file__).resolve().parents[2]/'boot/storage.sh').read_text()
+                from backend.storage import library
+                storage = library(family='e5')
                 storage = storage.replace('/sys/',str(folder/'sys')+'/')
                 (folder/'work/storage.sh').write_text(storage)
                 (folder/'sys/class/block/mmcblk0/size').write_text(str(SECTORS))

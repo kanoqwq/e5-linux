@@ -7,7 +7,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
-SOURCE=Path(__file__).resolve().parents[2]/'openwrt/bundle/flash.py'
+from firmware_sources import firmware_root
+SOURCE=firmware_root('e5')/'openwrt/bundle/flash.py'
 
 
 @unittest.skipUnless(SOURCE.is_file(), 'E5 compatible CLI source is tested in the E5 repository')

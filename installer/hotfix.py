@@ -9,10 +9,12 @@ import zipfile
 from package_gui import digest, sources
 
 HERE = Path(__file__).resolve().parent
-TOP = HERE.parent
+from integration import firmware_root
+
 
 
 def build_patch(destination, artifact=None):
+    TOP = firmware_root('mu300')
     destination = Path(destination).resolve()
     if destination.exists():raise ValueError('Choose a new patch directory; existing output is preserved')
     artifact = Path(artifact or HERE/'artifacts/windows')

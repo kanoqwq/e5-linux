@@ -92,9 +92,13 @@ if [ -s /etc/mu300/desktop-mode ]; then cat /etc/mu300/desktop-mode; else
     d=$(cat /run/mu300/disk-dev)
     case "$d" in /dev/mmcblk[1-9]*) echo sd ;; *) echo legacy ;; esac
 fi''').strip().splitlines()
-        if (len(info) != 4 or info[0] not in ('f50', 'v50', 'u30air') or info[1] not in ('a', 'b')
-                or not re.fullmatch(r'/dev/mmcblk\d+p\d+', info[2])):
+        if (len(info) != 4 or info[1] not in ('a', 'b')
+                or not re.fullmatch(r'/dev/(?:mmcblk\d+p|sd[a-z]+)[1-9][0-9]*', info[2])):
             raise ValueError('Not a supported MU300 runtime')
+        if info[0] not in ('f50','v50','u30air'):
+            if gui: gui.confirm_update_profile(info[0])
+            elif input('Unknown model '+info[0]+'; type yes to continue / 未匹配机型，输入 yes 继续: ') != 'yes':
+                raise ValueError('Model exception was not confirmed / 尚未确认机型风险')
         mode = info[3]
         if mode not in ('sd', 'part', 'data-image', 'legacy'):
             raise ValueError('Unsupported root layout / 不支持的根区域布局: '+mode)

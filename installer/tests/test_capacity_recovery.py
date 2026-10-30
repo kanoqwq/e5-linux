@@ -43,7 +43,7 @@ class CapacityRecovery(unittest.TestCase):
         commands = []
         def read(command, timeout=15):
             commands.append(command)
-            if (command == 'cat /sys/class/block/mmcblk0/device/cid' or 'e5_storage_identity "$d"' in command):
+            if (command == 'cat /sys/class/block/mmcblk0/device/cid' or 'openwrt_storage_identity "$d"' in command):
                 value = DEVICE['cid']
             elif command == 'cat /proc/sys/kernel/random/boot_id':
                 value = '22222222-2222-4222-8222-222222222222'
@@ -66,7 +66,7 @@ class CapacityRecovery(unittest.TestCase):
             self.service.run(context, adapter)
         adapter.probe.assert_not_called()
         adapter.execute.assert_not_called()
-        self.assertTrue(all((command.startswith(('cat ', 'readlink -f', 'dd if=', 'test -s ')) or 'e5_storage_identity "$d"' in command)
+        self.assertTrue(all((command.startswith(('cat ', 'readlink -f', 'dd if=', 'test -s ')) or 'openwrt_storage_identity "$d"' in command)
                             and 'of=' not in command for command in commands))
         return self.store.load(record['id'])
 

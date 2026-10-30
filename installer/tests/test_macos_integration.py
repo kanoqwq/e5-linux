@@ -190,7 +190,7 @@ class MacIntegrationTest(unittest.TestCase):
             self.assertEqual(Adb(self.package).exe, str(bundled))
             self.assertEqual(app_directory(), Path.home()/'Library/Application Support/OpenWrt-Installer')
         # Test the actual compatible CLI's lookup as well, without executing it.
-        spec = importlib.util.spec_from_file_location('mac_cli_fixture', TOP/'openwrt/bundle/flash.py')
+        spec = importlib.util.spec_from_file_location('mac_cli_fixture', __import__('firmware_sources').firmware_root('e5')/'openwrt/bundle/flash.py')
         if not spec.origin or not Path(spec.origin).is_file(): self.skipTest('E5 compatible CLI source is not in this mirror')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)

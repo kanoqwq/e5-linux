@@ -23,7 +23,7 @@ from .transport import Adb, wireless_serial
 from .uninstall import Uninstaller, prepare as prepare_uninstall, persist as persist_uninstall
 from .uninstall_growth import PreservationUnavailable
 from .online_shrink import OnlineShrink, OnlineDecision, inspect as inspect_online, allocation as online_allocation, fallback_plan
-from .model_compat import decision as model_decision, runtime_warning, require_approval
+from .model_compat import decision as model_decision, runtime_warning, mu300_runtime, require_approval
 
 METHODS = {'tf', 'part', 'reinstall', 'image', 'boot', 'update', 'uninstall'}
 
@@ -160,6 +160,29 @@ class Service:
             return self.active.snapshot() if self.active else None
         if command == 'list':
             return [self.public(r) for r in self.store.list()]
+        if command == 'records':
+            entries = []
+            for record in self.store.list():
+                directory = self.record_directory(record['id'])
+                files = [path for path in directory.rglob('*') if not path.is_symlink() and path.is_file()]
+                entries.append(dict(record=self.public(record), bytes=sum(path.stat().st_size for path in files),
+                                    files=len(files), running=self.record_running(record['id'])))
+            return entries
+        if command == 'delete_record':
+            if p.get('confirmed') is not True:
+                raise ValueError('Confirm deletion of the record and its local backups / 请确认删除记录及本地备份')
+            tid = p['transaction']
+            directory = self.record_directory(tid)
+            record = self.store.load(tid)
+            if self.record_running(tid):
+                raise ValueError('This installation record is in use / 此安装记录正在使用，不能删除')
+            with ExitStack() as locks:
+                for identity in sorted({v for k in ('serial', 'cid') if isinstance(v := record['device'].get(k), str) and v}):
+                    locks.enter_context(DeviceLock(self.store.base, identity))
+                shutil.rmtree(directory)
+            if self.active and self.active.record['id'] == tid:
+                self.active = None
+            return dict(deleted=tid)
         if command == 'cancel':
             if self.active and self.worker and self.worker.is_alive():
                 self.active.cancel = True
@@ -378,17 +401,29 @@ class Service:
             if record.get('version') != 1:
                 raise ValueError('Unsupported transaction version')
             target = self.store.directory(record['id'])
-            if target.exists():
-                raise ValueError('Transaction already exists')
-            if record.get('legacy'):
-                # macOS /var and /private/var can refer to the same directory.
-                relative = Path(record['legacy']).resolve().relative_to(Path(record.get('data_directory', directory)).resolve())
-                record['legacy'] = str(target/relative)
-            record['data_directory'] = str(target)
-            shutil.copytree(directory, target)
-            self.store.save(record)
+            from .recovery_records import import_record
+            from . import host
+            embedded = host.current()
+            temporary = embedded.recovery_import_root(directory) if embedded is not None else None
+            record = import_record(directory, target, record)
+            if temporary is not None:
+                try:
+                    shutil.rmtree(temporary)
+                except OSError:
+                    self.emit('notice', dict(level='warning', code='recovery_import_cleanup',
+                        message='Record imported; temporary extraction could not be removed / 记录已导入，但临时解压目录未能清理'))
             return self.public(record)
         raise ValueError('Unsupported command / 不支持的命令')
+
+    def record_running(self, tid):
+        return bool(self.worker and self.worker.is_alive() and self.active and self.active.record['id'] == tid)
+
+    def record_directory(self, tid):
+        directory = self.store.directory(tid)
+        owner = (self.store.base/'transactions').resolve()
+        if directory.is_symlink() or directory.resolve().parent != owner or not directory.is_dir():
+            raise ValueError('Installation record is missing or outside its workspace / 安装记录不存在或不在本机记录目录中')
+        return directory
 
     def rebind_uninstall(self, record, serial, package):
         """Explicit paused-resume transport selection, bound to the original hardware."""
@@ -431,24 +466,20 @@ class Service:
                 raise ValueError('SSH root required')
             kind = self.package['adapter']
             profile = read('cat /etc/e5/device-profile' if kind == 'e5' else 'cat /run/mu300/device')
-            if kind == 'mu300' and profile not in ('f50', 'v50', 'u30air'):
-                raise ValueError('Wrong OpenWrt profile / OpenWrt 机型不匹配')
-            cid = read(storage_io.runtime_identity_script())
+            cid = read(storage_io.runtime_identity_script(self.package['adapter']))
             if not re.fullmatch('[a-f0-9]{32}', cid):
-                raise ValueError('Cannot establish OpenWrt eMMC identity')
+                raise ValueError('Cannot establish OpenWrt internal-storage identity / 无法确认 OpenWrt 内置存储身份')
             capacity = int(read("df -Pk / | awk 'END {print $2}'"))*1024
             root_dev = read('cat /run/mu300/disk-dev' if kind == 'mu300' else
                             "readlink -f $(awk '$2==\"/\" {print $1}' /proc/mounts | tail -1)")
-            if re.fullmatch(r'/dev/(?:block/)?(?:mmcblk\d+(?:p\d+)?|sd[a-z]+[1-9][0-9]*|loop\d+)', root_dev):
+            if re.fullmatch(r'/dev/(?:block/)?(?:mmcblk\d+(?:p\d+)?|sd[a-z]+(?:[1-9][0-9]*)?|loop\d+)', root_dev):
                 raw = read_bytes(f'dd if={root_dev} bs=1024 skip=1 count=1 2>/dev/null')
                 capacity = verify_ext4_capacity(raw, 0)
             result = dict(serial='ssh:'+key, cid=cid, ssh_key=key, host=host, profile=profile,
                         model=profile.upper(), system='OpenWrt', slot=read('cat /run/mu300/linux-slot') if kind == 'mu300' else 'B',
                         root=True, readiness='ready', capacity=capacity)
-            if kind == 'e5':
-                warning = runtime_warning(self.package['profile'], profile)
-                if warning:
-                    result['model_mismatch'] = warning
+            warning = (mu300_runtime(profile) if kind=='mu300' else runtime_warning(self.package['profile'],profile))
+            if warning: result['model_mismatch'] = warning
             return result
         finally:
             client.close()
@@ -632,7 +663,7 @@ class Service:
                         raise ValueError('Final verification command failed')
                     return value
                 def read(script):return read_bytes(script).decode().strip()
-                cid = read(storage_io.runtime_identity_script())
+                cid = read(storage_io.runtime_identity_script(r['package']['adapter']))
                 if cid != r['device']['cid']:
                     raise RecoveryRequired('Management address belongs to another device / 管理地址对应另一台设备')
                 if r['choices']['method'] == 'update':
@@ -650,7 +681,7 @@ class Service:
                     dev = read("readlink -f $(awk '$2==\"/\" {print $1}' /proc/mounts | tail -1)")
                 else:
                     dev = read('cat /run/mu300/disk-dev')
-                if not re.fullmatch(r'/dev/(?:block/)?(?:mmcblk\d+(?:p\d+)?|sd[a-z]+[1-9][0-9]*|loop\d+)', dev):
+                if not re.fullmatch(r'/dev/(?:block/)?(?:mmcblk\d+(?:p\d+)?|sd[a-z]+(?:[1-9][0-9]*)?|loop\d+)', dev):
                     raise ValueError('Cannot identify installed root block device')
                 raw = read_bytes(f'dd if={dev} bs=1024 skip=1 count=1 2>/dev/null')
                 # Older records may store the growth choice only in choices.

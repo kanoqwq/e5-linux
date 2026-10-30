@@ -44,7 +44,7 @@ class ReleaseArchiveTest(unittest.TestCase):
             (package/'launchers').mkdir()
             launcher = package/'launchers/start-installer.sh'
             launcher.write_text('#!/bin/sh\nexec python3 OpenWrt-Installer.py --resume "$@"\n')
-            with patch.object(release, 'TOP', top), patch.object(release, 'attach'):
+            with patch.object(release, 'firmware_root', return_value=top), patch.object(release, 'attach'):
                 release.refresh(package)
             self.assertIn('openwrt-backend --cli --package-root "$PWD" --resume "$@"', launcher.read_text())
             manifest = json.loads((package/'desktop/manifest.json').read_text())

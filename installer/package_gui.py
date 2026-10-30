@@ -19,17 +19,16 @@ def digest(path):
 def sources():
     paths = [HERE/n for n in ('backend_entry.py','build.py','package_gui.py','platform-tools.json','platform-tools-macos.json','GUIDE.md','ota-tool.py','stage-ota.py','build-ota.py','ota-requirements.txt')]
     paths += list((HERE/'backend').glob('*.py'))
-    paths += [HERE.parent/'boot/storage.sh']
+    paths += [HERE/'resources.py', HERE/'release-index.py']
+    paths += [p for p in (HERE/'runtime').rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     paths += [HERE/'device'/n for n in ('f2fs-online.c','test-f2fs-online.c','f2fs-online-arm64','build.json')]
     paths += [HERE/'build-online-helper.py']
-    paths += list((HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota').glob('*.py'))
-    paths += [HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/proxy.sh']
     paths += list((HERE/'ota-native').glob('*'))
     paths += [HERE/'build-ota-native.py']
     paths += [p for p in (HERE/'ui/src').rglob('*') if p.is_file()]
-    paths += [HERE/'ui'/n for n in ('package.json','package-lock.json','vite.config.ts','tailwind.config.js','postcss.config.js','tsconfig.json','index.html','diff.html','ota.html','rust-toolchain.toml')]
+    paths += [HERE/'ui'/n for n in ('package.json','package-lock.json','vite.config.ts','tailwind.config.js','postcss.config.js','tsconfig.json','index.html','diff.html','ota.html','release-index.html','rust-toolchain.toml')]
     paths += [HERE/'ui/src-tauri'/n for n in ('Cargo.toml','Cargo.lock','build.rs','tauri.conf.json','src/main.rs','src/distribution.rs','capabilities/default.json','icons/icon.ico','icons/icon.icns','icons/icon.png')]
-    plugin = HERE.parent/'openwrt/luci-app-unisoc-ota'
+    plugin = HERE/'runtime/luci-app-unisoc-ota'
     paths += list((plugin/'htdocs').rglob('*.js'))
     paths += [plugin/'root/usr/share/rpcd/acl.d/unisoc-ota.json']
     # Native Windows and macOS checkouts must identify the same source revision.

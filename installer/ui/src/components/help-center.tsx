@@ -7,6 +7,7 @@ import {Dialog, DialogContent, DialogDescription, DialogTitle} from './ui/dialog
 import {helpTopics} from '../help-data';
 import {helpStrings} from '../help-i18n';
 import type {Language} from '../i18n';
+import {android} from '../protocol';
 
 export function HelpCenter({language, open, onOpenChange, initialTopic, onGuide}:
   {language:Language; open:boolean; onOpenChange:(open:boolean)=>void; initialTopic:string; onGuide:()=>void}) {
@@ -42,6 +43,15 @@ export function GettingStarted({language, open, onOpenChange}:
   useEffect(() => {if (open) setStep(0);}, [open]);
   useEffect(() => {body.current?.scrollTo({top:0});}, [step]);
   const Icon = [Usb, ShieldCheck, BookOpen][step];
+  const mobileBodies=language==='zh'?[
+    ['控制手机无需 root；用 OTG 连接目标设备，并允许手机的 USB 访问和目标设备的 ADB 调试授权。','也可通过无线 ADB（IP:5555）或 SSH 连接。导入完整 ZIP 或已解压的安装包目录后再检查设备。','恢复备份保存在本 App 私有空间，请导出到手机文档；卸载本 App 会删除私有安装记录。'],
+    t.introBodies[1],
+    ['首次离线分区准备可能需要数分钟，之后会自动重启。目标设备断线、Android 初始化和重新授权都是正常等待阶段。','如果目标 Android 被重置，请完成初始化、开启 USB 调试，并重新允许这台手机的调试授权和 su。已有 root 可以直接使用。','安装记录保存在控制手机的 App 私有空间。重新打开后选择“继续未完成的安装”；换手机或卸载 App 前，请先导出完整恢复备份。']
+  ]:[
+    ['The control phone needs no root. Connect by OTG, grant USB access and authorize its ADB key on the target.','Wireless ADB (IP:5555) and SSH are also supported. Import a complete ZIP or extracted package before inspecting the target.','Export recovery backups to Documents. Uninstalling this app deletes its private installation records.'],
+    t.introBodies[1],
+    ['The first offline preparation may take several minutes and reboot automatically. Target disconnects, Android setup and authorization are expected waiting stages.','After a target reset, complete setup, enable USB debugging and authorize this phone and su again. Existing working root is accepted.','Records stay in this control app. Reopen Continue an unfinished installation to resume. Export a complete recovery backup before changing phones or uninstalling the app.']
+  ];
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent closeLabel={t.closeGuide} className="onboarding-dialog">
       <div className="dialog-heading"><div className="eyebrow">OPENWRT · {t.guide}</div><DialogTitle>{t.guide}</DialogTitle><DialogDescription>{t.guideIntro}</DialogDescription></div>
@@ -49,7 +59,7 @@ export function GettingStarted({language, open, onOpenChange}:
       <div className="onboarding-body scroll-area" ref={body}>
         <AnimatePresence mode="wait" initial={false}><m.div key={step} initial={{opacity:reduceMotion ? 1 : 0,x:reduceMotion ? 0 : 6}} animate={{opacity:1,x:0}} exit={{opacity:0}} transition={{duration:reduceMotion ? 0 : .14}}>
           <div className="guide-title"><Icon size={25} aria-hidden="true"/><h2>{t.introTitles[step]}</h2></div>
-          <ul>{t.introBodies[step].map(paragraph => <li key={paragraph}>{paragraph}</li>)}</ul>
+          <ul>{(android?mobileBodies[step]:t.introBodies[step]).map(paragraph => <li key={paragraph}>{paragraph}</li>)}</ul>
         </m.div></AnimatePresence>
         <p className="guide-no-action"><ShieldCheck size={16}/>{t.noAction}</p>
       </div>

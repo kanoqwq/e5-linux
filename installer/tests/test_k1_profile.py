@@ -15,7 +15,8 @@ from backend.package import inspect_package
 from backend.service import plan_install
 from backend.state import compatible, sha
 
-TOP = Path(__file__).resolve().parents[2]
+from firmware_sources import firmware_root
+TOP = firmware_root('e5')
 PROFILE = {'profile': 'k1', 'android_models': ['angelcare K1']}
 
 
@@ -108,8 +109,10 @@ class K1(unittest.TestCase):
             self.assertEqual(package['profile'], 'k1')
             self.assertTrue(compatible(package, {**package, 'path': 'D:/moved'}))
             manifest.write_text(json.dumps({**PROFILE, 'android_models': ['VIPME M8']}))
-            with self.assertRaisesRegex(ValueError, 'K1'):
-                inspect_package(root)
+            # Model-name differences are reviewed by typed consent, not a package allowlist.
+            self.assertEqual(inspect_package(root)['profile'], 'k1')
+            from backend.model_compat import android_warning
+            self.assertIsNotNone(android_warning({**PROFILE,'android_models':['VIPME M8']},'VIPME M8','m8-board'))
             with self.assertRaisesRegex(ValueError, 'profile'):
                 compatible(package, {**package, 'profile': 'm8'})
 

@@ -13,7 +13,13 @@ export function DialogContent({children, className, closeLabel, ...props}:
   return <Primitive.Portal>
     <Primitive.Overlay className="dialog-overlay"/>
     <Primitive.Content className={cn('dialog-content', className)}
-      onOpenAutoFocus={() => {previousFocus.current = document.activeElement as HTMLElement;}}
+      onOpenAutoFocus={event => {
+        previousFocus.current = document.activeElement as HTMLElement;
+        if (/Android/i.test(navigator.userAgent)) {
+          event.preventDefault();
+          requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][data-state="open"]')).at(-1)?.focus({preventScroll:true}));
+        }
+      }}
       onCloseAutoFocus={event => {
         event.preventDefault();
         if (!document.querySelector('[role="dialog"]') && previousFocus.current?.isConnected)

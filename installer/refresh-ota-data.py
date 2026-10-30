@@ -11,12 +11,12 @@ from pathlib import Path
 from package_gui import sources, validate_artifact, digest
 
 HERE = Path(__file__).resolve().parent
-DATA = {'../openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/'+n:n
+DATA = {'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/'+n:n
         for n in ('engine.py', 'boot.py', 'rpc.py', 'proxy.sh')}
 # errors.js is also compiled into the desktop UI: changes require a native build.
 DATA.update({
-    '../openwrt/luci-app-unisoc-ota/htdocs/luci-static/resources/view/system/unisoc-ota.js': 'unisoc-ota.js',
-    '../openwrt/luci-app-unisoc-ota/root/usr/share/rpcd/acl.d/unisoc-ota.json': 'unisoc-ota.json',
+    'runtime/luci-app-unisoc-ota/htdocs/luci-static/resources/view/system/unisoc-ota.js': 'unisoc-ota.js',
+    'runtime/luci-app-unisoc-ota/root/usr/share/rpcd/acl.d/unisoc-ota.json': 'unisoc-ota.json',
 })
 
 

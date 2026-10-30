@@ -1,0 +1,27 @@
+[package]
+name = "openwrt-tools-mobile"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "openwrt_tools_mobile"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-mobile-host = { path = "../plugin" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+debug = 1
+incremental = false
+

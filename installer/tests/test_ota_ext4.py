@@ -27,7 +27,7 @@ class Ext4Tests(unittest.TestCase):
                 self.skipTest('Creating the Windows ext4 test fixture requires Ubuntu-22.04 in WSL')
         elif not shutil.which('mke2fs'):
             self.skipTest('Creating the ext4 test fixture requires mke2fs')
-        repo=Path(__file__).resolve().parents[2]
+        repo=Path(__file__).resolve().parents[1]
         (repo/'work').mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='ota-test-',dir=repo/'work') as d:
             d=Path(d)

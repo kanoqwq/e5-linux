@@ -19,7 +19,8 @@ from backend.service import plan_install
 from backend.state import Context, Store, Pending
 from test_storage_ufs import snapshot
 
-TOP = Path(__file__).resolve().parents[2]
+from firmware_sources import firmware_root
+TOP = firmware_root('e5')
 
 
 class Transport:

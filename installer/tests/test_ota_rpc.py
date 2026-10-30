@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 @unittest.skipUnless(os.name == 'posix', 'rpcd uses Linux locks')
 class RPCTests(unittest.TestCase):
     def setUp(self):
-        directory = Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
+        directory = Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
         sys.path.insert(0, str(directory)); self.addCleanup(lambda: sys.path.remove(str(directory)))
         spec = importlib.util.spec_from_file_location('ota_rpc_regression', directory/'rpc.py')
         self.rpc = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.rpc)

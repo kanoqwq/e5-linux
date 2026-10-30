@@ -14,7 +14,8 @@ from backend.adapter import Adapter, args_for
 from backend.service import Service
 from backend.state import Context, RecoveryRequired, Store
 
-TOP=Path(__file__).resolve().parents[2]
+from firmware_sources import firmware_root
+TOP=firmware_root('e5')
 SERIAL='fixture-selected'
 CID='b'*32
 
@@ -43,7 +44,7 @@ class ReadOnlyAdb:
         if script=='cat /sys/class/block/mmcblk1p20/start /sys/class/block/mmcblk1p20/size':return '33556480 8388608'
         if script=='test -b /dev/block/mmcblk0p1; echo $?':return '0'
         if script=='cat /sys/class/block/mmcblk0p1/size':return '16777216'
-        if (script=='cat /sys/class/block/mmcblk0/device/cid' or 'e5_storage_identity "$d"' in script):return 'c'*32
+        if (script=='cat /sys/class/block/mmcblk0/device/cid' or 'openwrt_storage_identity "$d"' in script):return 'c'*32
         if script=='cat /sys/class/block/mmcblk0p1/start 2>/dev/null || echo 0':return '2048'
         raise AssertionError('Unexpected simulated ADB command: '+script)
 
@@ -63,6 +64,9 @@ class MethodRouting(unittest.TestCase):
         a=Adapter.__new__(Adapter);a.kind=kind;a.root=Path('.');a.ctx=None;a.password=''
         a.package={'adapter':kind,'path':'.','profile':'e5' if kind=='e5' else 'mu300-family'}
         a.adb=ReadOnlyAdb();a.adb.card=card;a.adb.commands=[]
+        if kind=='mu300':
+            properties=a.adb.properties();properties['ro.product.model']='F50'
+            a.adb.properties=Mock(return_value=properties)
         a.bind=Mock()
         a.legacy=SimpleNamespace(package_profile=Mock(return_value={'profile':'e5','android_models':['E5']}),android_profile=Mock(return_value='f50'),device_sd=Mock(side_effect=AssertionError('Internal mode touched TF discovery')),device_size=Mock(side_effect=AssertionError('Internal mode read TF capacity')))
         a.read_gpt=Mock(return_value={'empty':[1],'safe_gaps':[]})

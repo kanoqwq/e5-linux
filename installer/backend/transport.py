@@ -14,6 +14,7 @@ from .state import sha
 from .diagnostics import traced
 from .binary_io import pull_binary
 from .windows_mtp import prepare_devices
+from . import host
 
 
 def hidden_process():
@@ -66,11 +67,15 @@ def wireless_serial(serial):
 class Adb:
     def __init__(self, package, serial=None):
         self.serial = serial
+        provider = host.current()
+        self.driver = provider.adb(serial) if provider is not None else None
+        if provider is not None and self.driver is None:
+            raise ValueError('Embedded ADB transport is missing / Android ADB 传输层缺失')
         names = ('tools/adb.exe', 'platform-tools/adb.exe') if sys.platform == 'win32' else (
             'tools/macos/adb', 'tools/adb', 'platform-tools/adb') if sys.platform == 'darwin' else (
             'tools/adb', 'platform-tools/adb')
         paths = [Path(package) / name for name in names]
-        self.exe = next((str(p) for p in paths if p.is_file()), shutil.which('adb'))
+        self.exe = 'android-adb' if self.driver is not None else next((str(p) for p in paths if p.is_file()), shutil.which('adb'))
         if not self.exe:
             raise ValueError('ADB is missing from tools / 安装包缺少 ADB 工具')
         self.su = None
@@ -82,7 +87,9 @@ class Adb:
         if self.serial and args[0] not in ('devices', 'connect', 'disconnect'):
             cmd += ['-s', self.serial]
         def perform():
-            result = subprocess.run(cmd + list(args), capture_output=True, timeout=timeout, **hidden_process())
+            driver=getattr(self,'driver',None)
+            result = (driver.run(list(args), timeout=timeout, context=self.context) if driver is not None else
+                      subprocess.run(cmd + list(args), capture_output=True, timeout=timeout, **hidden_process()))
             if check and result.returncode:
                 detail = (result.stderr or result.stdout).decode('utf-8', 'replace')[-4000:].strip()
                 raise ConnectionError('ADB command failed / ADB 命令失败'+(': '+detail if detail else ''))
@@ -174,6 +181,16 @@ class Adb:
         return self.backup_staging
 
     def _pull_backup(self, remote, local, total, name, context):
+        if getattr(self,'driver',None) is not None:
+            since=time.monotonic()
+            def progress(done, expected):
+                context.boundary()
+                if expected!=total or done>total:raise ValueError('Backup transfer size changed')
+                context.transfer('backup/'+name,done,total,since)
+            self.driver.pull(remote,local,progress=progress,timeout=45)
+            if not local.is_file() or local.stat().st_size!=total:
+                raise ValueError('Incomplete backup / 备份文件不完整: '+name)
+            return
         args=[self.exe]+(['-s',self.serial] if self.serial else [])+['pull',remote,str(local)]
         since=time.monotonic();last_change=since;previous=-1
         process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**hidden_process())

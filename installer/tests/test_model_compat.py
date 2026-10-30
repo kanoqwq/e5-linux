@@ -39,7 +39,8 @@ class ModelCompatibility(unittest.TestCase):
                                           'angelcare K1','ums9157_2h10'))
         self.assertIsNotNone(android_warning({'profile':'k1','android_models':['angelcare K1']},
                                              'angelcare K1','wrong'))
-        self.assertEqual(decision({'adapter':'mu300'},self.device,'part',{}),(None,None))
+        self.assertIsNotNone(decision({'adapter':'mu300'},self.device,'part',{})[0])
+        self.assertEqual(decision({'adapter':'mu300'},{'model_mismatch':None},'part',{}),(None,None))
 
     def test_only_exact_yes_with_current_token_approves(self):
         prompt, _ = decision(self.package,self.device,'part',{})

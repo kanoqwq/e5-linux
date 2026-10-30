@@ -18,7 +18,7 @@ class DataRefreshTests(unittest.TestCase):
     def fixture(self, root):
         artifact = root/'artifact'; artifact.mkdir()
         installer = root/'installer'; installer.mkdir()
-        key = '../openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        key = 'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         source = installer/key; source.parent.mkdir(parents=True); source.write_bytes(b'new-data\n')
         files = {}
         for name in ('OpenWrt-Installer.exe', 'tools/adb.exe', 'tools/AdbWinApi.dll',
@@ -89,7 +89,7 @@ class DataRefreshTests(unittest.TestCase):
     def test_shared_errors_are_compiled_ui_input_and_cannot_be_data_refreshed(self):
         with tempfile.TemporaryDirectory() as d:
             artifact,installer,before,after=self.fixture(Path(d))
-            after['../openwrt/luci-app-unisoc-ota/htdocs/luci-static/resources/unisoc-ota/errors.js']='changed-shared-ui-source'
+            after['runtime/luci-app-unisoc-ota/htdocs/luci-static/resources/unisoc-ota/errors.js']='changed-shared-ui-source'
             with patch.object(refresh,'HERE',installer),patch.object(refresh,'sources',return_value=after):
                 with self.assertRaisesRegex(ValueError,'native rebuild required'):refresh.refresh(artifact,'windows-x64')
             self.assertEqual(json.loads((artifact/'build.json').read_text())['source'],before)

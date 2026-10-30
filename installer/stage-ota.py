@@ -4,12 +4,12 @@ import argparse
 from pathlib import Path
 import shutil
 
-TOP = Path(__file__).resolve().parents[1]
+TOP = Path(__file__).resolve().parent
 
 
 def stage(root):
     root = Path(root)
-    source = TOP / 'openwrt/luci-app-unisoc-ota'
+    source = TOP / 'runtime/luci-app-unisoc-ota'
     for folder, destination in (('root', ''), ('htdocs', 'www')):
         for path in (source / folder).rglob('*'):
             if not path.is_file() or '__pycache__' in path.parts:

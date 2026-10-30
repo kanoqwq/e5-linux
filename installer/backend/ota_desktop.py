@@ -174,7 +174,10 @@ class Desktop:
                         result = analyze(self.analysis['old'], self.analysis['new'], patch, self.progress, index_directory=self.index_directory)
                         self.index_path = result.get('index_path')
                         from .ota_bundle import export_bundle
-                        export_bundle(patch, p['output'], self.root)
+                        from . import host
+                        if host.current() is not None:
+                            host.current().export_bundle(patch,p['output'],self.analysis['new'])
+                        else:export_bundle(patch, p['output'], self.root)
                         result['output'] = p['output']
                     return result
                 result = analyze(self.analysis['old'], self.analysis['new'],

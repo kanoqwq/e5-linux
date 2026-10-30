@@ -97,7 +97,12 @@ def candidate(pair, sectors, node, old_size, new_size):
 
 
 def helper_files():
-    if getattr(sys,'frozen',False):
+    from . import host
+    embedded=host.resource('f2fs-online-arm64')
+    if embedded is not None:
+        directory=embedded.parent
+        binary,metadata=embedded,host.resource('online-helper/build.json')
+    elif getattr(sys,'frozen',False):
         directory = Path(sys._MEIPASS)
         binary, metadata = directory/'f2fs-online-arm64', directory/'online-helper/build.json'
     else:

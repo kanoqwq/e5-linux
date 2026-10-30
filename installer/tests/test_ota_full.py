@@ -240,7 +240,7 @@ class FullUpdateTests(unittest.TestCase):
         with (self.root/'dev/block/by-name/boot_a').open('r+b') as image:
             image.seek(4096);image.write(b'changed')
         import subprocess
-        engine=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        engine=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         result=subprocess.run([sys.executable,str(engine),'rollback','--root',str(self.root)],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0);self.assertIn('changed=boot',result.stdout)
         self.assertEqual((self.root/'usr/lib/test').read_bytes(),b'new')

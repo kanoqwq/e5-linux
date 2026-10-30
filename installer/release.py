@@ -12,10 +12,12 @@ from backend.package import inspect_package
 from package_gui import attach, digest, size_report
 from archive_tools import write_member
 
-TOP=Path(__file__).resolve().parents[1]
+from integration import firmware_root
+
 
 
 def refresh(package):
+    TOP=firmware_root()
     package=Path(package)
     if (package/'desktop/manifest.json').is_file():
         shutil.copy2(TOP/'desktop/installer.py',package/'OpenWrt-Installer.py')

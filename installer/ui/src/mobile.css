@@ -1,0 +1,322 @@
+/* Native Android layout: one content scroller; tools below on phones, rail on tablets. */
+.mobile-tools{display:none}
+.android-host body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
+.android-host #root{height:100dvh;min-height:0;display:grid;grid-template-areas:"app" "tools";grid-template-rows:minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);overflow:hidden}
+.android-host .app-shell,.android-host .ota-shell{grid-area:app;width:100%;max-width:none;margin:0;height:100%;min-height:0;overflow:hidden}
+.android-host .mobile-tools{grid-area:tools;display:flex;position:relative;flex-direction:column;background:hsl(var(--card));border-top:1px solid hsl(var(--border));z-index:30;padding:4px 8px max(6px,env(safe-area-inset-bottom));min-width:0}
+.android-host .mobile-tools-brand{display:none}
+.android-host .mobile-tool-items{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.android-host .mobile-tool-items button{display:flex;align-items:center;flex-direction:column;justify-content:center;gap:2px;min-height:54px;padding:3px 4px;border:0;border-radius:12px;font-size:11px;font-weight:500;white-space:nowrap;color:hsl(var(--muted-foreground))}
+.android-host .mobile-tool-icon{display:grid;place-items:center;width:52px;height:29px;border-radius:14px}
+.android-host .mobile-tool-items button[aria-current=page]{color:hsl(var(--primary));font-weight:650}
+.android-host .mobile-tool-items button[aria-current=page] .mobile-tool-icon{background:hsl(var(--primary)/.12)}
+.android-host .mobile-tool-items button:disabled{opacity:.55}
+.android-host .mobile-tools>p{position:absolute;bottom:calc(100% + 8px);left:12px;right:12px;background:hsl(var(--card));color:hsl(var(--destructive));padding:12px 16px;border:1px solid hsl(var(--border));box-shadow:0 4px 20px #0002;border-radius:12px;font-size:13px}
+.android-host header{height:62px;padding:0 16px;gap:8px}
+.android-host .brand{gap:9px;min-width:0;flex:1}
+.android-host .brand>div:last-child{min-width:0}
+.android-host .brand strong{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.android-host .brand small{display:none}
+.android-host .brand-icon{padding:8px;border-radius:10px;flex-shrink:0}
+.android-host .brand-icon>svg{width:20px;height:20px}
+.android-host .mobile-preferences{display:flex;align-items:center;gap:1px;flex-shrink:0}
+.android-host .mobile-icon-control{position:relative;display:grid;place-items:center;width:36px;height:42px;min-height:42px;padding:0;margin:0;flex-shrink:0;border-radius:9px;color:hsl(var(--muted-foreground));font-size:12px;font-weight:650}
+.android-host .mobile-icon-control select{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:0;padding:0;cursor:pointer}
+.android-host .mobile-icon-control:focus-within{outline:2px solid hsl(var(--primary));outline-offset:-2px}
+.android-host .workspace{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.android-host .workspace>main{display:block;flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;padding:20px 16px;overscroll-behavior:contain;scrollbar-gutter:auto}
+.android-host .page{display:block;flex:none;min-height:auto;overflow:visible;max-width:1080px;margin:0 auto}
+.android-host .page>.scroll-area,.android-host .page-scroll,.android-host .records-list,.android-host .purpose-list{height:auto;min-height:0;max-height:none;overflow:visible;flex:none;padding-right:0;scrollbar-gutter:auto}
+.android-host .page>.eyebrow{display:none}
+.android-host h1{font-size:23px;line-height:1.4;margin:0 0 8px;letter-spacing:-.4px}
+.android-host .intro{font-size:13px;line-height:1.7;margin:0 0 18px;max-width:none}
+.android-host .purpose-list{display:grid;grid-template-columns:1fr;gap:11px;border:0}
+.android-host .purpose{padding:16px;gap:13px;min-height:88px;border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card));align-items:center;margin:0}
+.android-host .purpose-icon{padding:11px;border-radius:11px;flex-shrink:0}
+.android-host .purpose-icon svg{width:21px;height:21px}
+.android-host .purpose h2{font-size:15px;line-height:1.5}
+.android-host .purpose p{font-size:12px;line-height:1.65;margin-top:4px}
+.android-host .purpose>svg{width:18px;flex-shrink:0}
+.android-host .guide-callout{margin:0 0 18px;padding:12px 14px;gap:10px;border-radius:12px;min-height:0}
+.android-host .guide-callout strong{font-size:13px}
+.android-host .guide-callout button{min-height:40px;font-size:12px;padding:0 11px;white-space:nowrap}
+.android-host .page section{padding:16px;margin:14px 0;border-radius:14px}
+.android-host .section-title{gap:10px;flex-wrap:wrap}
+.android-host .section-title h2{font-size:15px}
+.android-host .package-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.android-host .package-row .file-path{grid-column:1/-1;min-width:0;width:100%;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;padding:0;font-size:12px}
+.android-host .package-row>button:last-child{grid-column:1/-1}
+.android-host .page input:not([type=checkbox]):not([type=radio]),.android-host .page select{width:100%;min-height:44px;font-size:14px}
+.android-host .device-select{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px}
+.android-host .device-card{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.android-host .form-grid{grid-template-columns:1fr;gap:15px;margin:16px 0}
+.android-host .form-grid label{font-size:13px;gap:7px}
+.android-host .method-options{display:grid;grid-template-columns:1fr;gap:9px;margin:14px 0}
+.android-host .method-options button{min-height:50px;justify-content:flex-start;padding:13px;font-size:13px;flex-wrap:wrap}
+.android-host .actions{display:flex;flex-wrap:wrap;gap:10px;padding-top:14px}
+.android-host .actions>button{flex:1 1 135px;min-width:0;min-height:44px;height:auto;white-space:normal;overflow-wrap:anywhere;line-height:1.5;text-align:center}
+.android-host .wireless-controls{display:flex;flex-wrap:wrap;gap:10px}
+.android-host .wireless-controls label{flex:1 1 100%;min-width:0}
+.android-host .wireless-controls button{flex:1;min-height:42px}
+.android-host .mobile-flowbar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid hsl(var(--border));background:hsl(var(--card));flex-shrink:0}
+.android-host .mobile-home-action{padding:0;width:38px;min-height:38px;color:hsl(var(--muted-foreground))}
+.android-host .mobile-step-details{position:relative;flex:1;min-width:0}
+.android-host .mobile-step-details>summary{display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none;min-height:42px}
+.android-host .mobile-step-details>summary::-webkit-details-marker{display:none}
+.android-host .mobile-step-details>summary>span:nth-child(2){flex:1;min-width:0}
+.android-host .mobile-step-details strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.android-host .mobile-step-details small{display:block;font-size:10px;margin-top:2px}
+.android-host .mobile-current-step{width:29px;height:29px;display:grid;place-items:center;border-radius:50%;background:hsl(var(--primary)/.12);color:hsl(var(--primary));font-size:12px;font-weight:700}
+.android-host .mobile-step-details>.stepper{position:absolute;top:calc(100% + 8px);left:-44px;right:0;z-index:25;background:hsl(var(--card));border:1px solid hsl(var(--border));box-shadow:0 8px 28px #0002;border-radius:12px;padding:14px;margin:0;max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.android-host .mobile-step-details:not([open])>.stepper{display:none}
+.android-host .mobile-step-details .stepper li{min-height:34px;font-size:12px}
+.android-host .mobile-step-details .stepper li:after{display:none}
+.android-host .log-panel{flex:none;margin-top:22px;padding-top:12px}
+.android-host .log-inner{height:175px}
+.android-host .app-shell>footer{padding:5px 16px;font-size:9px;min-height:25px}
+.android-host .app-shell>footer svg{width:11px;height:11px}
+.android-host .ota-main{display:block;flex:1;width:100%;max-width:1180px;min-height:0;margin:0 auto;padding:20px 16px 28px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+.android-host .ota-intro{margin:0 0 18px;max-width:none}
+.android-host .ota-intro h1{font-size:23px;line-height:1.4;margin:0 0 8px}
+.android-host .ota-intro p{font-size:13px;margin:0;line-height:1.7}
+.android-host .ota-eyebrow{display:none}
+.android-host .ota-grid{display:grid;grid-template-columns:1fr;grid-template-rows:none;gap:16px;min-height:0;align-items:start}
+.android-host .ota-card{padding:17px;border-radius:14px;min-height:0;overflow:visible;scrollbar-gutter:auto}
+.android-host .ota-card h2{margin:0 0 18px;font-size:15px;gap:9px}
+.android-host .ota-label{font-size:12px;margin:16px 0 8px}
+.android-host .ota-picker{padding:14px;min-height:62px;gap:10px}
+.android-host .ota-picker span{font-size:13px;line-height:1.6}
+.android-host .ota-picker>svg{width:20px}
+.android-host .ota-picker span,.android-host .file-path{overflow-wrap:anywhere}
+.android-host .ota-wide{min-height:45px;margin-top:18px}
+.android-host .ota-card input{min-height:45px}
+.android-host .ota-result{display:block;overflow:visible}
+.android-host .ota-result-body{overflow:visible;max-height:none;min-height:0;flex:none;padding:0}
+.android-host .ota-empty{min-height:105px;flex-direction:row;text-align:left;gap:14px}
+.android-host .ota-empty>svg{width:28px;height:28px;flex-shrink:0}
+.android-host .ota-empty p{font-size:12px;max-width:none}
+.android-host .ota-notice{max-height:none;overflow:visible;white-space:normal;font-size:12px;padding:13px;line-height:1.7}
+.android-host .ota-error{max-height:210px;font-size:12px;line-height:1.7;padding:13px}
+.android-host .ota-error pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+.android-host .mobile-operation-banner{position:sticky;top:0;z-index:12;margin:0 0 14px;border:1px solid hsl(var(--primary)/.25);background:hsl(var(--card));box-shadow:0 3px 12px #0001}
+.android-host .ota-versions{font-size:11px;margin:16px 0;gap:7px}
+.android-host .ota-release strong{font-size:19px}
+.android-host .ota-stats{gap:9px;margin:16px 0;padding:16px 0}
+.android-host .ota-stats strong{font-size:17px}
+.android-host .ota-stats small{font-size:10px}
+.android-host .ota-footer{font-size:11px;line-height:1.65;margin-top:18px;padding:0}
+.android-host .index-workflow{display:grid;grid-template-columns:1fr;gap:16px}
+.android-host .index-pickers{display:grid;grid-template-columns:1fr;gap:10px}
+.android-host .index-pickers .ota-picker>span{display:block}
+.android-host .index-pickers strong{display:block;font-size:13px;font-weight:600}
+.android-host .index-pickers small{display:block;font-size:11px;color:hsl(var(--muted-foreground));margin-top:4px}
+.android-host .index-selection{padding:12px 13px;background:hsl(var(--muted)/.55);border-radius:10px;margin-top:14px}
+.android-host .index-selection strong{font-size:12px;font-weight:550;overflow-wrap:anywhere}
+.android-host .index-selection p{font-size:11px;margin:5px 0 0;color:hsl(var(--muted-foreground))}
+.android-host .index-worker-field{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+.android-host .index-worker-field select{width:86px;min-height:44px}
+.android-host .index-hint{font-size:12px;line-height:1.7;color:hsl(var(--muted-foreground));margin:14px 0 0}
+.android-host .index-boot{font-size:12px;margin-top:16px;border-top:1px solid hsl(var(--border));padding-top:13px}
+.android-host .index-boot summary{cursor:pointer;color:hsl(var(--muted-foreground))}
+.android-host .index-boot .actions{padding-top:10px}
+.android-host .index-status{margin-top:16px;font-size:12px;line-height:1.7;padding:14px;border:1px solid hsl(var(--border));border-radius:12px;overflow-wrap:anywhere}
+.android-host .index-status>p{display:flex;gap:9px;align-items:flex-start;margin:0}
+.android-host .index-status svg{flex-shrink:0;margin-top:2px}
+.android-host .index-status details{max-height:220px;overflow:auto;margin-top:12px}
+.android-host .mobile-about-body{min-height:0;overflow:auto}
+.android-host .mobile-about-body .support-info{margin:0 0 16px}
+.android-host .mobile-about-body .support-author{font-size:14px;margin-bottom:12px}
+.android-host .mobile-about-body .community-groups button{min-height:40px;font-size:12px}
+.android-host .mobile-about-body .support-entry{min-height:42px;font-size:13px}
+.android-host .mobile-about-body>.device-hint{font-size:12px;line-height:1.7;margin:14px 0}
+@media(max-width:767px){
+ .android-host .ota-shell[data-has-review=false] .ota-result{display:none}
+}
+@media(min-width:768px){
+ .android-host #root{grid-template-areas:"tools app";grid-template-columns:88px minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+ .android-host .mobile-tools{border-top:0;border-right:1px solid hsl(var(--border));padding:16px 8px;gap:20px}
+ .android-host .mobile-tools-brand{display:flex;flex-direction:column;align-items:center;gap:8px;color:hsl(var(--primary));font-size:10px;font-weight:700}
+ .android-host .mobile-tools-brand small{display:none}
+ .android-host .mobile-tool-items{display:flex;flex-direction:column;gap:11px}
+ .android-host .mobile-tool-items button{min-height:65px;padding:7px 4px;font-size:11px}
+ .android-host .mobile-tools>p{bottom:16px;left:calc(100% + 8px);right:auto;width:260px}
+ .android-host header{height:68px;padding:0 28px}
+ .android-host .brand strong{font-size:16px}
+ .android-host .mobile-preferences{gap:5px}
+ .android-host .mobile-icon-control{width:40px}
+ .android-host .workspace>main,.android-host .ota-main{padding:26px 28px 30px}
+ .android-host .mobile-flowbar{padding:10px 28px}
+ .android-host .mobile-step-details{max-width:570px}
+ .android-host .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+ .android-host .method-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .android-host .ota-grid,.android-host .index-workflow{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+ .android-host .ota-card{padding:20px}
+ .android-host .ota-intro h1,.android-host h1{font-size:26px}
+ .android-host .ota-intro p{max-width:850px}
+}
+@media(min-width:1000px){
+ .android-host .purpose-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+ .android-host .purpose-list>.purpose:last-child{grid-column:1/-1}
+ .android-host .purpose{min-height:106px;padding:20px}
+ .android-host .app-shell[data-view=home] .page{max-width:1000px}
+ .android-host .package-row{display:flex;flex-wrap:wrap}
+ .android-host .package-row .file-path{flex-basis:100%}
+}
+@media(min-width:1200px){
+ .android-host #root{grid-template-columns:172px minmax(0,1fr)}
+ .android-host .mobile-tools{padding:24px 12px}
+ .android-host .mobile-tools-brand{flex-direction:row;justify-content:flex-start;gap:10px;padding:0 13px;font-size:13px}
+ .android-host .mobile-tools-brand small{display:block;font-size:9px;letter-spacing:.15em;color:hsl(var(--muted-foreground));margin-top:3px}
+ .android-host .mobile-tool-items button{min-height:52px;flex-direction:row;justify-content:flex-start;gap:9px;font-size:13px;padding:6px 10px}
+ .android-host .mobile-tool-icon{width:33px;height:33px}
+ .android-host .mobile-tool-items button[aria-current=page]{background:hsl(var(--primary)/.09)}
+ .android-host .mobile-tool-items button[aria-current=page] .mobile-tool-icon{background:none}
+}
+
+.android-host .device-select>svg{display:none}
+
+.android-host .purpose:active{background:hsl(var(--muted))}
+.android-host .ota-picker:active:enabled{background:hsl(var(--muted))}
+@media(max-width:767px){
+ .android-host .size-field{align-items:stretch;flex-direction:column;gap:8px;margin:17px 0}
+ .android-host .guide-callout>svg{width:18px;height:18px}
+ .android-host .confirmation{margin-left:0;margin-right:0}
+}
+
+/* Dialogs have their own fixed heading/actions and one scrollable body. */
+.android-host .dialog-content{width:min(560px,calc(100vw - 32px));height:auto;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);padding:22px;gap:12px;border-radius:18px;overflow-y:auto}
+.android-host .dialog-content>h2{font-size:20px;line-height:1.5;margin-right:35px}
+.android-host .dialog-content>p{font-size:13px;line-height:1.7;color:hsl(var(--muted-foreground))}
+.android-host .dialog-content:is(.help-dialog,.onboarding-dialog,.support-dialog,.mobile-about-dialog){padding:0;gap:0;overflow:hidden}
+.android-host .dialog-heading{padding:22px 64px 18px 24px;min-width:0}
+.android-host .dialog-heading .eyebrow{font-size:10px;letter-spacing:.08em;margin-bottom:7px}
+.android-host .dialog-heading h2{font-size:21px;line-height:1.4;margin:0 0 7px}
+.android-host .dialog-heading p{font-size:12px;line-height:1.7;margin:0}
+.android-host .dialog-close{right:12px;top:12px;width:44px;height:44px;display:grid;place-items:center;padding:0;border-radius:12px;z-index:2}
+.android-host .dialog-close svg{width:21px;height:21px}
+.android-host .dialog-footer{padding:14px 24px;gap:10px;background:hsl(var(--card));min-width:0}
+.android-host .dialog-footer button{min-height:44px;white-space:nowrap;line-height:1.5;font-size:13px}
+.android-host .help-dialog{width:min(980px,calc(100vw - 40px));height:min(850px,calc(100dvh - 40px))}
+.android-host .help-search{margin:0 24px 16px;gap:10px;min-width:0}
+.android-host .help-search input{min-height:44px;width:100%;font-size:13px}
+.android-host .help-search span{font-size:10px}
+.android-host .help-layout{display:grid;grid-template-columns:170px minmax(0,1fr);min-height:0;flex:1;gap:0}
+.android-host .help-topics{overflow-y:auto;min-height:0;padding:12px;border-right:1px solid hsl(var(--border))}
+.android-host .help-topics button{font-size:12px;padding:11px;min-height:42px;white-space:normal}
+.android-host .help-article{overflow-y:auto;min-height:0;padding:20px 24px}
+.android-host .help-article>h2{font-size:19px;margin-bottom:14px}
+.android-host .help-markdown{font-size:13px;line-height:1.8}
+.android-host .help-markdown li{margin:10px 0;padding-left:0}
+.android-host .help-dialog .dialog-footer>button:first-child{flex:1 1 auto;min-width:0;padding-left:12px;padding-right:12px}
+.android-host .help-dialog .dialog-footer>button:last-child{flex:0 0 auto;padding-left:10px;padding-right:10px}
+.android-host .onboarding-dialog{width:min(700px,calc(100vw - 40px));height:min(660px,calc(100dvh - 40px))}
+.android-host .guide-steps{padding:0 24px 18px;gap:12px}
+.android-host .guide-steps li{font-size:11px;gap:8px}
+.android-host .onboarding-body{padding:22px 24px;overflow-y:auto;min-height:0;flex:1}
+.android-host .guide-title{gap:12px;margin-bottom:18px}
+.android-host .guide-title h2{font-size:18px;line-height:1.5}
+.android-host .onboarding-body ul{font-size:13px;padding-left:18px}
+.android-host .onboarding-body li{line-height:1.85;padding-left:0;margin:13px 0}
+.android-host .guide-no-action{font-size:12px;line-height:1.7;margin-top:20px}
+.android-host .support-dialog{width:min(720px,calc(100vw - 40px));height:auto;max-height:calc(100dvh - 40px)}
+.android-host .support-body{padding:0 24px 20px;min-height:0;overflow-y:auto;flex:1}
+.android-host .support-star-intro p{font-size:12px}
+.android-host .support-repositories{grid-template-columns:1fr;gap:9px;margin:14px 0 20px}
+.android-host .support-repository{padding:12px;gap:10px;border-radius:12px}
+.android-host .support-repository strong{font-size:13px}
+.android-host .support-repository p{font-size:11px}
+.android-host .support-repository span{font-size:10px;line-height:1.7}
+.android-host .support-image{width:100%;max-width:290px;margin:0 auto}
+.android-host .support-dialog .dialog-footer{flex-wrap:wrap}
+.android-host .support-dialog .dialog-footer>span{flex:1 1 240px;font-size:11px;line-height:1.7}
+.android-host .support-dialog .dialog-footer>button{flex:1 1 130px}
+.android-host .mobile-about-dialog{width:min(600px,calc(100vw - 40px));height:min(740px,calc(100dvh - 40px))}
+.android-host .mobile-about-body{overflow-y:auto;min-height:0;flex:1;padding:0 24px 20px}
+.android-host .mobile-about-body .support-info{margin:0}
+.android-host .mobile-about-body .support-author{padding:14px;border-radius:12px;background:hsl(var(--muted)/.55);font-size:13px;margin-bottom:14px}
+.android-host .mobile-about-body .community-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.android-host .mobile-about-body .community-groups button{display:flex;flex-wrap:nowrap;align-items:center;justify-content:center;text-align:center;min-height:54px;padding:10px;gap:3px;border:1px solid hsl(var(--border));border-radius:10px;font-size:11px;margin:0}
+.android-host .mobile-about-body .community-number{font-size:12px;font-variant-numeric:tabular-nums}
+.android-host .mobile-about-body .support-entry{height:44px;margin:16px 0;font-size:13px}
+.android-host .mobile-about-body .repository-link{display:flex;padding:12px;margin-bottom:10px;border:1px solid hsl(var(--border));border-radius:12px;gap:12px}
+.android-host .mobile-about-body .repository-link strong{font-size:13px}
+.android-host .mobile-about-body .repository-link small{font-size:11px}
+.android-host .mobile-about-body>.device-hint{font-size:12px;line-height:1.8;margin:16px 0}
+.android-host .mobile-about-body>button{width:100%;min-height:44px}
+.android-host .mobile-about-body>small{display:block;margin-top:14px;font-size:11px}
+.android-host .mobile-about-dialog .dialog-footer>button{width:100%}
+@media(max-width:639px){
+ .android-host .dialog-content:is(.help-dialog,.onboarding-dialog,.support-dialog,.mobile-about-dialog){left:0;top:0;transform:none;width:100%;max-width:none;height:100dvh;max-height:100dvh;border:0;border-radius:0}
+ .android-host .dialog-heading{padding:20px 66px 16px 20px}
+ .android-host .dialog-heading .eyebrow{display:none}
+ .android-host .dialog-heading h2{font-size:21px;margin-bottom:7px}
+ .android-host .dialog-heading p{font-size:12px;line-height:1.65}
+ .android-host .dialog-footer{padding:12px 20px max(12px,env(safe-area-inset-bottom))}
+ .android-host .help-search{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;margin:0 20px 14px}
+ .android-host .help-search span{grid-column:2;font-size:10px;justify-self:end}
+ .android-host .help-layout{display:flex;flex-direction:column}
+ .android-host .help-topics{display:flex;flex:0 0 auto;gap:7px;max-height:none;overflow-x:auto;overflow-y:hidden;padding:10px 20px;border:0;border-bottom:1px solid hsl(var(--border))}
+ .android-host .help-topics button{width:auto;flex:0 0 auto;white-space:nowrap;padding:9px 12px;margin:0;font-size:12px;border:1px solid hsl(var(--border));border-radius:20px}
+ .android-host .help-topics button[aria-current=page]{border-color:hsl(var(--primary)/.35)}
+ .android-host .help-article{flex:1;padding:20px;overflow-y:auto;min-height:0}
+ .android-host .guide-steps{padding:0 20px 16px;gap:10px}
+ .android-host .guide-steps li{flex:0 0 auto;min-width:0;font-size:12px;gap:8px}
+ .android-host .guide-steps li>span{width:28px;height:28px}
+ .android-host .guide-steps li>div{display:none}
+ .android-host .guide-steps li[aria-current=step]{flex:1}
+ .android-host .guide-steps li[aria-current=step]>div{display:block;line-height:1.5}
+ .android-host .onboarding-body{padding:22px 20px}
+ .android-host .onboarding-dialog .dialog-footer{display:grid;grid-template-columns:1fr auto;gap:8px}
+ .android-host .onboarding-dialog .dialog-footer>.guide-count{justify-self:end}
+ .android-host .guide-controls{grid-column:1/-1;display:flex;gap:10px}
+ .android-host .guide-controls>button{flex:1;min-height:46px}
+ .android-host .support-body,.android-host .mobile-about-body{padding:0 20px 20px}
+ .android-host .support-dialog .dialog-footer>span{flex-basis:100%;text-align:center}
+ .android-host .support-dialog .dialog-footer>button{flex-basis:100%}
+}
+@media(max-height:500px) and (min-width:640px){
+ .android-host .dialog-heading{padding:14px 64px 10px 20px}
+ .android-host .dialog-heading .eyebrow,.android-host .dialog-heading p{display:none}
+ .android-host .dialog-heading h2{font-size:18px;margin:0}
+ .android-host .dialog-footer{padding:10px 20px}
+ .android-host .help-search{margin-bottom:10px}
+ .android-host .guide-steps{padding-bottom:10px}
+ .android-host .onboarding-body{padding:14px 20px}
+}
+
+.android-host .records-home-entry{width:100%;min-height:46px;margin-top:16px;flex-shrink:0}
+.android-host .record-manager-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.android-host .record-manager-toolbar>button{min-height:44px}
+.android-host .record-manager-toolbar>button:first-child{flex:1}
+.android-host .record-manager-summary{display:flex;align-items:center;gap:9px;padding:14px;border:1px solid hsl(var(--border));border-radius:12px;font-size:13px;margin-bottom:14px}
+.android-host .record-manager-summary>span{flex:1}
+.android-host .record-manager-search input{width:100%;min-height:44px;font-size:13px;margin-bottom:16px}
+.android-host .record-manager-list{display:grid;grid-template-columns:1fr;gap:14px}
+.android-host .page .record-manager-item{margin:0;padding:16px;min-width:0}
+.android-host .record-manager-title{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}
+.android-host .record-manager-title h2{font-size:16px;margin:0}
+.android-host .record-manager-title p{font-size:11px;color:hsl(var(--muted-foreground));margin-top:5px;line-height:1.7}
+.android-host .record-manager-title .badge{font-size:10px;white-space:nowrap;flex-shrink:0}
+.android-host .record-manager-version{font-size:12px;overflow-wrap:anywhere;margin-top:12px}
+.android-host .record-manager-storage{font-size:11px;color:hsl(var(--muted-foreground));margin-top:6px}
+.android-host .record-manager-details{margin-top:12px;padding-top:12px;border-top:1px solid hsl(var(--border));font-size:12px}
+.android-host .record-manager-details summary{cursor:pointer;color:hsl(var(--muted-foreground))}
+.android-host .record-manager-details dl{display:grid;grid-template-columns:80px minmax(0,1fr);gap:9px;margin-top:12px;font-size:11px}
+.android-host .record-manager-details dd{overflow-wrap:anywhere}
+.android-host .record-manager-details dt{color:hsl(var(--muted-foreground))}
+.android-host .record-manager-actions{display:flex;gap:10px;margin-top:16px}
+.android-host .record-manager-actions button{flex:1;min-height:42px}
+.android-host .mobile-about-body>button+button{margin-top:10px}
+@media(min-width:1000px){.android-host .record-manager-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Long release names and verification actions must fit the mobile content width. */
+.android-host .activity-heading{min-width:0;max-width:100%;gap:12px}
+.android-host .activity-heading>div{flex:1;min-width:0}
+.android-host .activity-heading h2{overflow-wrap:anywhere}
+.android-host .activity-package{min-width:0;max-width:100%;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.7}
+.android-host .actions>button>svg,.android-host .backup-actions>button>svg{flex-shrink:0}
+.android-host .backup-actions>button{flex:1 1 150px;min-width:0;max-width:100%;height:auto;min-height:44px;white-space:normal;overflow-wrap:anywhere;line-height:1.5;text-align:center}
+@media(max-width:639px){
+ .android-host .progress-actions{flex-direction:column;align-items:stretch}
+ .android-host .progress-actions>button{width:100%;flex:0 0 auto;min-height:46px}
+}

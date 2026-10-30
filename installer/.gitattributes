@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.png -text
+*.ico -text
+*.icns -text
+*.whl -text
+*.jar -text
+*.so -text
+*.apk -text
+*.exe -text
+device/f2fs-online-arm64 -text

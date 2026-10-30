@@ -1,0 +1,3 @@
+[default]
+description = "OpenWrt mobile host commands and progress notifications."
+permissions = ["allow-request", "allow-native-command", "allow-register-listener", "allow-remove-listener"]

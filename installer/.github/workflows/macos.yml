@@ -1,0 +1,47 @@
+name: Apple Silicon tools
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Native ARM toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.90.0 --profile minimal
+          python -m pip install -r requirements-build.txt -r ota-requirements.txt rsa
+      - name: Native portable installer
+        run: python build.py
+      - name: Frozen ARM64 backend and ADB smoke
+        run: python tests/macos_frozen_smoke.py
+      - name: Diff Studio (reuse compiled installer)
+        run: python build-ota.py --output out/diff-studio-macos-arm64
+      - name: Archive native tools
+        run: |
+          tar -czf openwrt-tools-macos-arm64.tar.gz -C artifacts/macos-arm64 .
+          tar -czf openwrt-diff-studio-macos-arm64.tar.gz -C out/diff-studio-macos-arm64 .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-tools-macos-arm64
+          path: openwrt-tools-macos-arm64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-diff-studio-macos-arm64
+          path: openwrt-diff-studio-macos-arm64.tar.gz
+          if-no-files-found: error

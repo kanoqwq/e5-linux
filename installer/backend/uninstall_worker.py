@@ -76,7 +76,7 @@ misc=/dev/$misc_node
 android=/dev/$android_node
 linux=/dev/$linux_node
 [ "$android_node" != "$linux_node" ]
-[ "$(e5_storage_identity "$disk_node")" = "$cid" ]
+[ "$(openwrt_storage_identity "$disk_node")" = "$cid" ]
 [ "$(cat /sys/class/block/$disk_node/size)" = "$total" ]
 [ "$front" -ge 3 ] && [ "$front" -le 4096 ] && [ "$tail" -gt "$((total-4096))" ] && [ "$tail" -lt "$total" ]
 [ "$start" -ge "$front" ] && [ "$((start%8))" = 0 ] && [ "$root_size" -ge 4194304 ] && [ "$((start+root_size))" -le "$tail" ]

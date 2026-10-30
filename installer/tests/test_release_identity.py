@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-IDENTIFY = runpy.run_path(str(Path(__file__).resolve().parents[2]/'tools/release-identity.py'))['identify']
+IDENTIFY = runpy.run_path(str(__import__('firmware_sources').firmware_root('e5')/'tools/release-identity.py'))['identify']
 
 class ReleaseIdentityTest(unittest.TestCase):
     def test_source_changes_have_distinct_clear_versions(self):

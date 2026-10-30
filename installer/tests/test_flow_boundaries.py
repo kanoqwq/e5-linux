@@ -40,7 +40,7 @@ class FlowBoundaries(unittest.TestCase):
         struct.pack_into('<I', raw, 24, 2)
         struct.pack_into('<I', raw, 4, ((2 if expected_failure else 4) << 30)//4096)
         def read(command, timeout=15):
-            if (command == 'cat /sys/class/block/mmcblk0/device/cid' or 'e5_storage_identity "$d"' in command):
+            if (command == 'cat /sys/class/block/mmcblk0/device/cid' or 'openwrt_storage_identity "$d"' in command):
                 value = DEVICE['cid']
             elif command.startswith('readlink -f') or command == 'cat /run/mu300/disk-dev':
                 value = '/dev/mmcblk0p20'

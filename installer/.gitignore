@@ -4,3 +4,17 @@ ui/*.tsbuildinfo
 ui/src-tauri/target/
 artifacts/
 __pycache__/
+
+# Build outputs, private signing inputs and generated local reports
+/out/
+/work/
+*.jks
+*.keystore
+*.p12
+*.pfx
+local.properties
+key.properties
+keystore.properties
+
+# Local verification output can include device-specific diagnostics.
+/verification/

@@ -81,7 +81,8 @@ class Helpers(unittest.TestCase):
         self.assertIs(sys.argv,argv);self.assertIs(sys.modules['__main__'],main);self.assertEqual(sys.path,paths)
 
     def test_actual_firmware_extraction_runs_both_converters_before_device_pack(self):
-        repo=Path(__file__).resolve().parents[2]
+        from firmware_sources import firmware_root
+        repo=firmware_root('e5')
         source=repo/'openwrt/bundle/flash.py'
         if not source.is_file():self.skipTest('Real E5 extraction is exercised in the E5 repository')
         spec=importlib.util.spec_from_file_location('helper_extraction_fixture',source)

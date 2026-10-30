@@ -64,7 +64,7 @@ class OpenwrtConfirmation(unittest.TestCase):
         struct.pack_into('<I',raw,4,(expected//2 if bad_capacity else expected)//4096)
         def read(command,timeout=15):
             reads.append((targets[-1][0],command))
-            if (command=='cat /sys/class/block/mmcblk0/device/cid' or 'e5_storage_identity "$d"' in command):
+            if (command=='cat /sys/class/block/mmcblk0/device/cid' or 'openwrt_storage_identity "$d"' in command):
                 value=DEVICE['cid'] if targets[-1][0]=='192.0.2.2' else '0'*32
             elif command.startswith('readlink -f'):value='/dev/mmcblk0p20'
             elif command.startswith('dd if='):value=bytes(raw)

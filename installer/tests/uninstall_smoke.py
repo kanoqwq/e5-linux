@@ -81,7 +81,7 @@ def main(url='http://127.0.0.1:1420'):
                 dialog.get_by_role('button',name='选择格式化并查看计划' if zh else 'Choose format and review plan',exact=True).click();settle(page)
                 assert [c for c in page.evaluate('window.__fixture.calls') if c['command']=='plan'][-1]['params']['reset_token']=='fixture-reset-token'
             if preserve=='android':
-                page.get_by_text('原厂 Android 在解密后' if zh else 'stock Android grow decrypted F2FS',exact=False).wait_for()
+                page.get_by_text('在解密映射挂载前扩容 F2FS' if zh else 'grow decrypted F2FS before mounting',exact=False).wait_for()
             button=page.get_by_role('button',name='确认卸载' if zh else 'Confirm uninstall',exact=True)
             assert button.is_disabled()
             assert page.locator('.plan-list').get_by_text('4.00 GiB',exact=True).count()>=1

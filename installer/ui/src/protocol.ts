@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, addPluginListener } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface Device {serial: string; model?: string; label?: string; state?: string; wireless?: boolean; system?: string; slot?: string; root?: boolean; readiness?: string; encrypted?: boolean; existing?: boolean; tf?: string; profile?: string; free_bytes?: number; userdata_bytes?: number}
 export interface AdbConnection {endpoint: string; state?: string; devices: Device[]}
@@ -19,9 +19,27 @@ export interface Transaction {
 }
 export interface Transfer {name: string; bytes: number; total: number; bytes_per_second: number}
 export interface BackendEvent {type: string; data: unknown}
-export const request = <T = unknown>(command: string, params: Record<string, unknown> = {}) => invoke<T>('backend_request', {command, params});
-export const subscribe = (handler: (event: BackendEvent) => void) => listen<BackendEvent>('backend', event => handler(event.payload));
-export const native = <T = string | null>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args);
+export const android = /Android/i.test(navigator.userAgent);
+if (android) document.documentElement.classList.add('android-host');
+export function bridgeError(error:unknown):Error {
+  if(error instanceof Error)return error;
+  const value=error as {message?:unknown;error?:unknown;code?:unknown}|null;
+  const detail=typeof error==='string'?error:typeof value?.message==='string'?value.message:typeof value?.error==='string'?value.error:JSON.stringify(error);
+  return new Error(detail||'Android operation failed / Android 操作失败');
+}
+const mobileInvoke = async <T,>(command:string,args:Record<string,unknown>):Promise<T> => {
+  try{return await invoke<T>(command,args);}catch(error){throw bridgeError(error);}
+};
+export const request = <T = unknown>(command: string, params: Record<string, unknown> = {}): Promise<T> => android
+  ? mobileInvoke<{result:T}>('plugin:mobile-host|request', {command, parameters:JSON.stringify(params),language:localStorage.getItem('language')||'zh'}).then(r=>r.result)
+  : invoke<T>('backend_request', {command, params});
+export const subscribe = (handler: (event: BackendEvent) => void): Promise<()=>void> => android
+  ? addPluginListener<BackendEvent>('mobile-host','backend',handler).then(listener=>()=>listener.unregister())
+  : listen<BackendEvent>('backend', event => handler(event.payload));
+export const native = <T = string | null>(command: string, args: Record<string, unknown> = {}): Promise<T> => android
+  ? mobileInvoke<{value:T}>('plugin:mobile-host|native_command',{command,parameters:JSON.stringify(args),language:localStorage.getItem('language')||'zh'}).then(r=>r.value)
+  : invoke<T>(command, args);
+export const fileLabel = (path:string) => android ? path.replace(/\\/g,'/').split('/').filter(Boolean).pop() || path : path;
 export const gib = (bytes = 0) => (bytes / 1073741824).toFixed(2) + ' GiB';
 export function stateGroup(stage: string): number {
   if (['plan', 'package', 'device', 'environment'].includes(stage)) return 0;

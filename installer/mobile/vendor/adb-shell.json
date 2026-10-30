@@ -1,0 +1,9 @@
+{
+  "name": "adb-shell",
+  "version": "0.4.4",
+  "wheel": "adb_shell-0.4.4-py3-none-any.whl",
+  "wheel_sha256": "2af90cc6f6620ac4bb35608cf5d3a996d726d6c66a068314b34abb401a04e063",
+  "source_url": "https://files.pythonhosted.org/packages/8f/73/d246034db6f3e374dad9a35ee3f61345a6b239d4febd2a41ab69df9936fe/adb_shell-0.4.4.tar.gz",
+  "source_sha256": "04c305f30a2ca25d5c54b3cd6ce9bb64c36e5f07967b23b3fb6aaecc851b90b6",
+  "note": "Pure-Python wheel built from the pinned PyPI source; no host executable or native object. Required because Chaquopy resolves binary wheels and upstream 0.4.4 publishes only an sdist."
+}

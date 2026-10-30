@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 
 from package_gui import sources, digest
+from resources import asset
 
 HERE = Path(__file__).resolve().parent
 
@@ -52,15 +53,16 @@ def main():
         '--hidden-import','lz4.block','--hidden-import','xml.etree.ElementTree','--hidden-import','xml.parsers.expat',
         '--hidden-import','tarfile','--hidden-import','gzip','--hidden-import','zlib','--hidden-import','lzma',
         '--hidden-import','bz2','--hidden-import','http.server','--hidden-import','decimal','--hidden-import','array',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/boot.py')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/rpc.py')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/proxy.sh')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/htdocs/luci-static/resources/view/system/unisoc-ota.js')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/htdocs/luci-static/resources/unisoc-ota/errors.js')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'openwrt/luci-app-unisoc-ota/root/usr/share/rpcd/acl.d/unisoc-ota.json')+os.pathsep+'.',
+        '--add-data', str(asset('engine.py'))+os.pathsep+'.',
+        '--add-data', str(asset('boot.py'))+os.pathsep+'.',
+        '--add-data', str(asset('rpc.py'))+os.pathsep+'.',
+        '--add-data', str(asset('proxy.sh'))+os.pathsep+'.',
+        '--add-data', str(asset('unisoc-ota.js'))+os.pathsep+'.',
+        '--add-data', str(asset('errors.js'))+os.pathsep+'.',
+        '--add-data', str(asset('unisoc-ota.json'))+os.pathsep+'.',
         '--add-data', str(HERE/'ota-native/lz4raw-aarch64.so')+os.pathsep+'.',
-        '--add-data', str(HERE.parent/'boot/storage.sh')+os.pathsep+'.',
+        '--add-data', str(asset('storage-e5.sh'))+os.pathsep+'.',
+        '--add-data', str(asset('storage-mu300.sh'))+os.pathsep+'.',
         '--add-data', str(HERE/'device/f2fs-online-arm64')+os.pathsep+'.',
         '--add-data', str(HERE/'device/build.json')+os.pathsep+'online-helper',
         '--collect-all','paramiko','--collect-all','dissect.extfs',HERE/'backend_entry.py')

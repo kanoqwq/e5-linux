@@ -39,6 +39,9 @@ def run_helper(context, package, script, arguments, timeout=120):
         raise ValueError('Unsupported firmware converter / 不支持的固件转换器')
     context.boundary()
     context.stage('firmware_convert', tool=script.name)
+    from . import host
+    if host.current() is not None:
+        return host.current().run_helper(context,root,script,arguments,timeout)
     command = [sys.executable, *(['--run-tool'] if getattr(sys, 'frozen', False) else []), str(script), *map(str, arguments)]
     def perform():
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

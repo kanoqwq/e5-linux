@@ -148,13 +148,13 @@ class GenerationTests(unittest.TestCase):
     @unittest.skipUnless(os.name=='posix','Linux release staging permissions')
     def test_stage_built_in_plugin_and_preserve_state(self):
         import runpy
-        repo=Path(__file__).resolve().parents[2]
+        repo=Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'etc/unisoc-ota').mkdir(parents=True)
             (root/'etc/unisoc-ota/current.json').write_text('preserve existing state')
-            runpy.run_path(str(repo/'installer/stage-ota.py'))['stage'](root)
+            runpy.run_path(str(repo/'stage-ota.py'))['stage'](root)
             self.assertEqual((root/'etc/unisoc-ota/current.json').read_text(),'preserve existing state')
-            source=repo/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+            source=repo/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
             self.assertEqual((root/'usr/lib/unisoc-ota/engine.py').read_bytes(),source.read_bytes().replace(b'\r\n',b'\n'))
             self.assertTrue((root/'etc/rc.d/S06unisoc-ota').is_symlink())
             self.assertTrue((root/'etc/init.d/unisoc-ota').stat().st_mode & stat.S_IXUSR)
@@ -381,7 +381,7 @@ class EngineTests(unittest.TestCase):
 
     def test_manual_rollback(self):
         with Patch(self.p) as patch:self.e.apply(patch)
-        engine=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        engine=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         result=subprocess.run([sys.executable,str(engine),'rollback','--root',str(self.root)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertEqual((self.root/'usr/lib/test').read_bytes(),b'old')
@@ -390,7 +390,7 @@ class EngineTests(unittest.TestCase):
     def test_rollback_conflict_does_not_clobber_local_changes(self):
         with Patch(self.p) as patch:self.e.apply(patch)
         (self.root/'usr/lib/test').write_bytes(b'local edit')
-        engine=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        engine=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         result=subprocess.run([sys.executable,str(engine),'rollback','--root',str(self.root)],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0)
         self.assertEqual((self.root/'usr/lib/test').read_bytes(),b'local edit')
@@ -400,7 +400,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(self.e.rollback_check()['available'])
         (self.root/'usr/lib/test').write_bytes(b'old')
         self.assertTrue(self.e.rollback_check()['available'])
-        engine=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        engine=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         result=subprocess.run([sys.executable,str(engine),'rollback','--root',str(self.root)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertEqual((self.root/'usr/lib/test').read_bytes(),b'old')
@@ -432,7 +432,7 @@ class EngineTests(unittest.TestCase):
         with Patch(self.p) as patch:self.e.apply(patch)
         subprocess.run([sys.executable,'-c',"import sys;sys.path.insert(0,sys.argv[1]);import rpc;assert rpc.VERSION=='after'",str(target.parent)],check=True)
         self.assertTrue(self.e.rollback_check()['available'])
-        engine=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        engine=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         result=subprocess.run([sys.executable,str(engine),'rollback','--root',str(self.root)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertEqual(target.read_bytes(),b"VERSION='before'\n")
@@ -446,7 +446,7 @@ class EngineTests(unittest.TestCase):
         return ram
 
     def rollback_cli(self):
-        engine=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+        engine=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
         result=subprocess.run([sys.executable,str(engine),'rollback','--root',str(self.root)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
@@ -516,7 +516,7 @@ class EngineTests(unittest.TestCase):
     def test_rpc_upload_lock_and_arbitrary_paths(self):
         import importlib.util
         import fcntl
-        directory=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
+        directory=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
         sys.path.insert(0,str(directory));self.addCleanup(lambda:sys.path.remove(str(directory)))
         spec=importlib.util.spec_from_file_location('ota_test_rpc',directory/'rpc.py')
         rpc=importlib.util.module_from_spec(spec);spec.loader.exec_module(rpc)
@@ -551,7 +551,7 @@ class EngineTests(unittest.TestCase):
     def test_first_web_update_ack_exec_lock_and_completion_without_second_start(self):
         import fcntl, signal, time, traceback
         from types import SimpleNamespace
-        directory=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
+        directory=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
         sys.path.insert(0,str(directory));self.addCleanup(lambda:sys.path.remove(str(directory)))
         spec=importlib.util.spec_from_file_location('ota_first_web',directory/'rpc.py')
         rpc=importlib.util.module_from_spec(spec);spec.loader.exec_module(rpc)
@@ -616,7 +616,7 @@ class EngineTests(unittest.TestCase):
                 except ProcessLookupError:pass
 
     def test_ram_rpc_reboot_uses_isolated_busybox(self):
-        directory=Path(__file__).resolve().parents[2]/'openwrt/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
+        directory=Path(__file__).resolve().parents[1]/'runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota'
         sys.path.insert(0,str(directory));self.addCleanup(lambda:sys.path.remove(str(directory)))
         spec=importlib.util.spec_from_file_location('ota_reboot_rpc',directory/'rpc.py')
         rpc=importlib.util.module_from_spec(spec);spec.loader.exec_module(rpc)

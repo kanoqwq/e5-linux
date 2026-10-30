@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-TOP=Path(__file__).resolve().parents[2]
+from firmware_sources import firmware_root
+TOP=firmware_root('e5')
 SOURCE=TOP/'openwrt/bundle/flash.py'
 E5=SOURCE.is_file()
 if not E5:SOURCE=TOP/'desktop/installer.py'

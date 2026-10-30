@@ -4,10 +4,12 @@ import {createRoot} from 'react-dom/client';
 import {ArrowRight, CheckCircle2, CircleAlert, FileArchive, FolderOpen, GitCompareArrows, LoaderCircle, Moon, PackageCheck, Power, ShieldCheck, Sun, Upload} from 'lucide-react';
 import {Button} from './components/ui/button';
 import {Dialog, DialogContent, DialogTitle, DialogDescription} from './components/ui/dialog';
-import {native, request, subscribe} from './protocol';
+import {android, fileLabel, native, request, subscribe} from './protocol';
 import './style.css';
 import './ota.css';
-import {explainError} from '../../../openwrt/luci-app-unisoc-ota/htdocs/luci-static/resources/unisoc-ota/errors.js';
+import {MobilePreferences} from './components/mobile-preferences';
+import {MobileTools} from './components/mobile-tools';
+import {explainError} from '../../runtime/luci-app-unisoc-ota/htdocs/luci-static/resources/unisoc-ota/errors.js';
 
 interface Operation {path:string; before:unknown; after:unknown}
 interface Manifest {family:string;profile:string;base_version:string;target_version:string;kernel_release:string;operations:Operation[];preserved:string[];boot?:{size:number};runtime?:unknown}
@@ -19,7 +21,7 @@ const size = (n:number) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MiB' : (n
 function Studio() {
   const generator = location.pathname.endsWith('diff.html');
   const [en,setEn] = useState(localStorage.getItem('language') === 'en');
-  const [dark,setDark] = useState(matchMedia('(prefers-color-scheme: dark)').matches);
+  const [dark,setDark] = useState(localStorage.getItem('theme')==='dark'||localStorage.getItem('theme')!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);
   const tr = (zh:string,english:string) => en ? english : zh;
   const explainBlocker = (message:string) => explainError(message,en).message;
   const [old,setOld] = useState(''), [next,setNext] = useState('');
@@ -48,7 +50,9 @@ function Studio() {
     if(s.activation?.status==='warning') setError(tr('系统文件已更新，网页插件重载失败：','System files are updated, but web plugin reload failed: ')+s.activation.error);
   }
   useEffect(() => { document.documentElement.classList.toggle('dark',dark); }, [dark]);
+  useEffect(()=>{document.documentElement.lang=en?'en':'zh-CN';},[en]);
   useEffect(() => {
+    if (android) return;
     let alive=true;
     const stop=getCurrentWebview().onDragDropEvent(event=>{if(alive)dropHandler.current(event.payload);});
     void stop.catch(e=>{if(alive)setError(String(e));});
@@ -63,7 +67,9 @@ function Studio() {
   },[]);
   useEffect(() => {
     const stop = subscribe(e => {
-      if (e.type === 'ota_progress') {
+      if (e.type === 'import_progress') {
+        const d=e.data as {done:number;total:number};setProgress(tr('导入 ','Importing ')+size(d.done)+(d.total>0?' / '+size(d.total):''));
+      } else if (e.type === 'ota_progress') {
         const d = e.data as {stage:string;path?:string;done?:number;total?:number};
         setProgress(d.stage === 'upload' ? `↑ ${size(d.done || 0)} / ${size(d.total || 0)}` : d.path || d.stage);
       }
@@ -115,6 +121,7 @@ function Studio() {
     else { setPatch(path);setManifest(undefined); const r=await work(()=>request<{manifest:Manifest}>('ota_package',{path})); if(r){setManifest(r.manifest);if(host==='192.168.9.1'||host==='192.168.77.1')setHost(r.manifest.family==='mu300'?'192.168.77.1':'192.168.9.1');} }
   }
   const blocked = busy || running;
+  useEffect(()=>{if(android)document.documentElement.dataset.mobileBusy=String(blocked);return()=>{if(android)delete document.documentElement.dataset.mobileBusy;};},[blocked]);
   dropHandler.current = event=>{
     if(blocked || event.type==='leave') {setDropTarget(undefined);return;}
     // Tauri reports physical pixels; DOM hit testing uses CSS pixels.
@@ -127,30 +134,31 @@ function Studio() {
     if(event.paths.length!==1) {setError(tr('每个选择框一次只接收一个文件。','Drop one file into each selection box.'));return;}
     void selectInput(target,event.paths[0]);
   };
-  return <div className="ota-shell">
-    <header><div className="brand"><div className="brand-icon">{generator?<GitCompareArrows size={24}/>:<PackageCheck size={24}/>}</div><div><strong>{generator?'OpenWrt Diff Studio':'OpenWrt Patch Updater'}</strong><small>{tr('保留数据 · 只更新变更文件','Keep your data · Update changed files')}</small></div></div>
-      <div className="preferences"><Button variant="ghost" disabled={blocked} onClick={()=>{setEn(!en);localStorage.setItem('language',en?'zh':'en');}}>{en?'中文':'English'}</Button><Button variant="ghost" onClick={()=>setDark(!dark)} aria-label="Theme">{dark?<Sun size={18}/>:<Moon size={18}/>}</Button></div></header>
+  return <div className="ota-shell" data-has-review={Boolean(analysis||manifest||review)}>
+    <header><div className="brand"><div className="brand-icon">{generator?<GitCompareArrows size={24}/>:<PackageCheck size={24}/>}</div><div><strong>{android?(generator?'Diff Studio':tr('补丁更新','Patch Updater')):(generator?'OpenWrt Diff Studio':'OpenWrt Patch Updater')}</strong><small>{tr('保留数据 · 只更新变更文件','Keep your data · Update changed files')}</small></div></div>
+      <>{android?<MobilePreferences language={en?'en':'zh'} onLanguage={value=>{setEn(value==='en');localStorage.setItem('language',value);}} theme={dark?'dark':'light'} system={false} onTheme={value=>{setDark(value==='dark');localStorage.setItem('theme',value);}} disabled={blocked}/>:<div className="preferences"><Button variant="ghost" disabled={blocked} onClick={()=>{setEn(!en);localStorage.setItem('language',en?'zh':'en');}}>{en?'中文':'English'}</Button><Button variant="ghost" onClick={()=>{localStorage.setItem('theme',dark?'light':'dark');setDark(!dark);}} aria-label="Theme">{dark?<Sun size={18}/>:<Moon size={18}/>}</Button></div>}</></header>
     <main className="ota-main"><div className="ota-intro"><span className="ota-eyebrow">{generator?'RELEASE TO PATCH':'DIFFERENTIAL SYSTEM UPDATE'}</span><h1>{generator?tr('把两版发行包，变成一次轻量更新','Two releases. One compact update.'):tr('更新系统，留下你的设置','Update the system. Keep your setup.')}</h1><p>{generator?tr('旧版可选择完整 ZIP 或已保存的版本摘要，新版请选择完整 ZIP。分析成功后自动保存新版摘要。','Choose an old release ZIP or saved version index, and a new full ZIP. A new version index is saved automatically after successful analysis.'):tr('导入可信差异包，连接正在运行 OpenWrt 的设备，先检查再应用。','Import a trusted patch and connect to a running OpenWrt device. Review before applying.')}</p></div>
+    {android && blocked && <div className="ota-notice mobile-operation-banner" role="status"><LoaderCircle className="animate-spin" size={18}/><span>{running?tr('设备正在写入…','Device is writing…'):tr('正在处理，请稍候…','Processing…')}<small>{progress}</small></span></div>}
     <div className="ota-grid"><section className="ota-card"><h2><span className="ota-number">1</span>{generator?tr('选择发行版本','Select releases'):tr('选择补丁与设备','Select patch and device')}</h2>
-    {generator?<><label className="ota-label">{tr('旧版完整包或版本摘要','Old full release or version index')}</label><button className={'ota-picker'+(dropTarget==='old'?' is-dragover':'')} data-ota-drop="old" disabled={blocked} onClick={()=>void pick('old')}><FileArchive/><span>{old || tr('选择 ZIP 或版本摘要 JSON','Select ZIP or version index JSON')}</span><FolderOpen size={18}/></button><div className="ota-arrow"><ArrowRight size={18}/></div><label className="ota-label">{tr('新版完整包','New full release')}</label><button className={'ota-picker'+(dropTarget==='new'?' is-dragover':'')} data-ota-drop="new" disabled={blocked} onClick={()=>void pick('new')}><FileArchive/><span>{next || tr('选择 ZIP 文件','Select ZIP file')}</span><FolderOpen size={18}/></button>
+    {generator?<><label className="ota-label">{tr('旧版完整包或版本摘要','Old full release or version index')}</label><button className={'ota-picker'+(dropTarget==='old'?' is-dragover':'')} data-ota-drop="old" disabled={blocked} onClick={()=>void pick('old')}><FileArchive/><span>{fileLabel(old) || tr('选择 ZIP 或版本摘要 JSON','Select ZIP or version index JSON')}</span><FolderOpen size={18}/></button><div className="ota-arrow"><ArrowRight size={18}/></div><label className="ota-label">{tr('新版完整包','New full release')}</label><button className={'ota-picker'+(dropTarget==='new'?' is-dragover':'')} data-ota-drop="new" disabled={blocked} onClick={()=>void pick('new')}><FileArchive/><span>{fileLabel(next) || tr('选择 ZIP 文件','Select ZIP file')}</span><FolderOpen size={18}/></button>
       <Button variant="ghost" disabled={blocked} onClick={()=>void work(()=>native('open_index_data'))}><FolderOpen size={16}/>{tr('打开版本摘要目录','Open version index folder')}</Button>
       <Button className="ota-wide" disabled={blocked || !old || !next} onClick={()=>void work(async()=>{setAnalysis(undefined);const r=await request<Analysis>('ota_analyze',{old,new:next});setAnalysis(r);})}>{busy?<LoaderCircle className="animate-spin" size={18}/>:<GitCompareArrows size={18}/>} {tr('分析差异','Analyze changes')}</Button></>
-      :<><button className={'ota-picker'+(dropTarget==='patch'?' is-dragover':'')} data-ota-drop="patch" disabled={blocked} onClick={()=>void pick('patch')}><FileArchive/><span>{patch || tr('选择 .ota 差异包','Select .ota patch')}</span><FolderOpen size={18}/></button><label className="ota-label">{tr('设备管理地址','Device management address')}</label><input value={host} disabled={blocked} onChange={e=>{setHost(e.target.value);setReview(undefined);setRebootReady(false);}}/><label className="ota-label">SSH root {tr('密码','password')}</label><input type="password" value={password} disabled={blocked} onChange={e=>{setPassword(e.target.value);setReview(undefined);setRebootReady(false);}} autoComplete="off"/>
+      :<><button className={'ota-picker'+(dropTarget==='patch'?' is-dragover':'')} data-ota-drop="patch" disabled={blocked} onClick={()=>void pick('patch')}><FileArchive/><span>{fileLabel(patch) || tr('选择 .ota 差异包','Select .ota patch')}</span><FolderOpen size={18}/></button><label className="ota-label">{tr('设备管理地址','Device management address')}</label><input value={host} disabled={blocked} onChange={e=>{setHost(e.target.value);setReview(undefined);setRebootReady(false);}}/><label className="ota-label">SSH root {tr('密码','password')}</label><input type="password" value={password} disabled={blocked} onChange={e=>{setPassword(e.target.value);setReview(undefined);setRebootReady(false);}} autoComplete="off"/>
       <Button className="ota-wide" disabled={blocked || !patch || !host} onClick={()=>void work(async()=>{setReview(await request<Review>('ota_probe',{host,password,path:patch}));})}><ShieldCheck size={18}/>{tr('连接并检查','Connect and review')}</Button><Button variant="ghost" className="ota-wide" disabled={busy || !host} onClick={()=>void work(async()=>{const s=await request<Status>('ota_status',{host,password,path:patch});setRunning(s.job?.status==='running');showStatus(s);})}>{tr('重新检查设备状态','Check device status')}</Button></>}
     </section><section className="ota-card ota-result"><h2><span className="ota-number">2</span>{tr('检查并继续','Review and continue')}</h2><div className="ota-result-body" tabIndex={0} aria-label={tr('检查结果','Review results')}>
       {analysis || manifest?<><div className="ota-release"><small>{tr('目标设备','Target profile')}</small><strong>{(analysis?.manifest || manifest)!.profile}</strong><small>{(analysis?.manifest || manifest)!.kernel_release}</small></div><p className="ota-versions">{(analysis?.manifest || manifest)!.base_version}<ArrowRight size={16}/>{(analysis?.manifest || manifest)!.target_version}</p></>:<div className="ota-empty"><ShieldCheck size={42}/><p>{tr('选择文件后，在这里查看版本与兼容检查结果。','Select files to review versions and compatibility here.')}</p></div>}
       {(analysis?.manifest || manifest)?.boot && <p className="ota-notice">{tr('包含内核与启动镜像更新，配套模块随系统差异一起更新；用户插件、配置和数据保留。','Includes kernel/boot update and matching module changes. User packages, settings and data are retained.')}</p>}
-      {analysis?.index_path && <div className="ota-index"><strong>{tr('新版版本摘要已自动保存','New version index saved automatically')}</strong><p>{tr('下次可将它作为旧版输入；保存摘要不代表设备已完成更新。','Use it as the old release next time. Saving an index does not mean a device has been updated.')}</p><code>{analysis.index_path}</code><div><Button variant="outline" disabled={blocked} onClick={()=>void work(async()=>{const output=await native('save_index');if(!output)return;const r=await request<{path:string}>('ota_export_index',{output});setSuccess(tr('版本摘要已导出：','Version index exported: ')+r.path);})}><Upload size={15}/>{tr('导出版本摘要','Export version index')}</Button></div></div>}
+      {analysis?.index_path && <div className="ota-index"><strong>{tr('新版版本摘要已自动保存','New version index saved automatically')}</strong><p>{tr('下次可将它作为旧版输入；保存摘要不代表设备已完成更新。','Use it as the old release next time. Saving an index does not mean a device has been updated.')}</p><code>{fileLabel(analysis.index_path)}</code><div><Button variant="outline" disabled={blocked} onClick={()=>void work(async()=>{const output=await native('save_index');if(!output)return;const r=await request<{path:string}>('ota_export_index',{output});setSuccess(tr('版本摘要已导出：','Version index exported: ')+r.path);})}><Upload size={15}/>{tr('导出版本摘要','Export version index')}</Button></div></div>}
       {analysis && <><div className="ota-stats"><div><strong>{analysis.files}</strong><small>{tr('文件变更','Changed files')}</small></div><div><strong>{size(analysis.payload_bytes)}</strong><small>{tr('未压缩载荷','Uncompressed payload')}</small></div><div><strong>{analysis.added} / {analysis.removed}</strong><small>{tr('新增 / 删除','Added / removed')}</small></div></div>
         {!!analysis.blockers.length && <div className="ota-error ota-blockers" tabIndex={0} role="region" aria-label={tr('无法生成的原因','Reasons export is unavailable')}>{analysis.blockers.map((b,i)=><p key={i}>{explainBlocker(b)}</p>)}<details><summary>{tr('技术详情','Technical details')}</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{analysis.blockers.join('\n')}</pre></details></div>}<details className="ota-files"><summary>{tr('查看文件清单','View file list')}</summary>{analysis.manifest.operations.map(o=><div key={o.path}>{o.before?(o.after?'~':'−'):'+'} {o.path}</div>)}</details>
         <Button className="ota-wide" disabled={blocked || !analysis.can_export} onClick={()=>void work(async()=>{const output=await native('save_ota',{suggestedName:analysis.suggested_name,releasePath:next});if(!output)return;const r=await request<Analysis>('ota_export',{output});setAnalysis(previous=>previous?{...previous,...r}:r);setSuccess(tr('已生成差异包：','Patch saved: ')+r.output);})}><Upload size={18}/>{tr('导出差异包','Export patch')}</Button></>}
       {review && <><p>{tr('所需空间 / 可用空间：','Required / available: ')}{size(review.check.required_bytes)} / {size(review.check.free_bytes)}</p>{!![...review.check.conflicts,...review.check.package_conflicts].length && <div className="ota-error">{tr('本地文件或依赖冲突，未写入：','Local file or dependency conflicts; nothing written: ')}{[...review.check.conflicts,...review.check.package_conflicts].join(', ')}</div>}<label style={{display:'flex',gap:10,alignItems:'center',margin:'16px 0',fontSize:14}}><input type="checkbox" style={{width:'auto',height:'auto',margin:0}} checked={autoReboot} disabled={blocked} onChange={e=>setAutoReboot(e.target.checked)}/>{tr('更新完成后自动重启','Automatically reboot after updating')}</label><Button className="ota-wide" disabled={blocked || !review.check.applicable} onClick={()=>void work(async()=>{await request('ota_apply',{host,password,token:review.token,auto_reboot:autoReboot});setRebootReady(false);setRunning(true);setReview(undefined);})}><PackageCheck size={18}/>{tr('确认应用此补丁','Apply reviewed patch')}</Button></>}
     </div></section></div>
-    {(busy || running) && <div className="ota-notice"><LoaderCircle className="animate-spin" size={18}/><span>{running?tr('设备正在写入，关闭电脑更新器不会终止设备事务。','Device is writing. Closing this app does not cancel its transaction.'):tr('正在处理，请稍候…','Processing…')}<small>{progress}</small></span></div>}
+    {!android && (busy || running) && <div className="ota-notice"><LoaderCircle className="animate-spin" size={18}/><span>{running?tr('设备正在写入，关闭电脑更新器不会终止设备事务。','Device is writing. Closing this app does not cancel its transaction.'):tr('正在处理，请稍候…','Processing…')}<small>{progress}</small></span></div>}
     {error && <div className="ota-error" role="alert"><CircleAlert size={18}/><div><p>{explainError(error,en).message}</p><details><summary>{tr('技术详情','Technical details')}</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:180,overflow:'auto'}}>{explainError(error,en).details}</pre></details></div></div>}{success && <div className="ota-notice" role="status"><CheckCircle2 size={18}/><span>{success}</span></div>}
     {!generator && rebootReady && <Button disabled={blocked} onClick={()=>setRebootDialog(true)}><Power size={18}/>{tr('重启设备','Reboot device')}</Button>}
     <Dialog open={rebootDialog} onOpenChange={setRebootDialog}><DialogContent closeLabel={tr('关闭','Close')}><DialogTitle>{tr('重启设备？','Reboot device?')}</DialogTitle><DialogDescription>{tr('更新已完成。重启会短暂断开网络，配置和数据会保留。','The update is complete. Rebooting briefly disconnects networking; settings and data are retained.')}</DialogDescription><div style={{display:'flex',gap:12,justifyContent:'flex-end',marginTop:24}}><Button variant="ghost" onClick={()=>setRebootDialog(false)}>{tr('取消','Cancel')}</Button><Button onClick={()=>{setRebootDialog(false);void work(async()=>{await request('ota_reboot',{host,password});setRebootReady(false);setSuccess(tr('重启命令已发送，设备正在重新启动。','Reboot requested. The device is restarting.'));});}}>{tr('确认重启','Confirm reboot')}</Button></div></DialogContent></Dialog>
     <footer className="ota-footer"><ShieldCheck size={16}/>{tr('保留配置、额外插件和用户数据。系统变更写入前保留恢复副本，内核和模块可一同更新。仅导入可信来源的补丁。','Settings, extra packages and user data are retained. Recovery copies precede writes. Kernel and modules can update together. Import trusted patches only.')}</footer>
     </main></div>;
 }
-createRoot(document.getElementById('root')!).render(<Studio/>);
+createRoot(document.getElementById('root')!).render(<><MobileTools/><Studio/></>);

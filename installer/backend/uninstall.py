@@ -463,7 +463,7 @@ class Uninstaller:
                         volume['filesystem_bytes'],volume.get('uuid','0'*32)]
         files = {'openwrt-uninstall/'+name:content for name,content in self.files.items()}
         files.update(tools)
-        files['openwrt-uninstall/storage.sh'] = storage_io.library(self.adapter.root).encode()
+        files['openwrt-uninstall/storage.sh'] = storage_io.library(self.adapter.root, self.adapter.kind).encode()
         files.update({'openwrt-uninstall/request':(':'.join(map(str,request))+'\n').encode(),
                       'openwrt-uninstall/before-bcb':before_bcb,
                       'openwrt-uninstall/recovery-bcb':bytes(bcb) if self.r['plan']['wipe'] else bytes(2048),

@@ -1,6 +1,6 @@
 import React, {lazy, Suspense, useCallback, useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {invoke} from '@tauri-apps/api/core';
+import {native as invoke} from './protocol';
 import {AnimatePresence, domAnimation, LazyMotion, m, MotionConfig, useReducedMotion} from 'motion/react';
 import {toast} from 'sonner';
 import {Toaster} from './components/ui/sonner';
@@ -10,13 +10,16 @@ import {Dialog, DialogContent, DialogDescription, DialogTitle} from './component
 import {SupportDialog, SupportInfo, type RepositoryId} from './components/support';
 import {helpStrings} from './help-i18n';
 import {strings, type Language} from './i18n';
-import {gib, native, request, stateGroup, subscribe, type AdbConnection, type Device, type Package, type ResetPrompt, type ModelPrompt, type Transaction, type Transfer} from './protocol';
+import {android, gib, native, request, stateGroup, subscribe, type AdbConnection, type Device, type Package, type ResetPrompt, type ModelPrompt, type Transaction, type Transfer} from './protocol';
 import './style.css';
+import {MobileTools} from './components/mobile-tools';
+import {MobilePreferences} from './components/mobile-preferences';
+import {RecordManager} from './components/record-manager';
 
 const HelpCenter = lazy(() => import('./components/help-center').then(module => ({default:module.HelpCenter})));
 const GettingStarted = lazy(() => import('./components/help-center').then(module => ({default:module.GettingStarted})));
 
-type View = 'home' | 'install' | 'update' | 'resume' | 'boot' | 'advanced' | 'plan' | 'progress';
+type View = 'home' | 'install' | 'update' | 'resume' | 'boot' | 'advanced' | 'plan' | 'progress' | 'records';
 function App() {
   const [lang, setLang] = useState<Language>(localStorage.getItem('language') === 'en' ? 'en' : 'zh');
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(() => {
@@ -24,6 +27,7 @@ function App() {
     return saved === 'light' || saved === 'dark' ? saved : 'system';
   });
   const t = strings[lang];
+  const packageLabel=android?(lang==='zh'?'选择完整 ZIP':'Select release ZIP'):t.choosePackage;
   const help = helpStrings[lang];
   const [helpOpen, setHelpOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -31,6 +35,7 @@ function App() {
   const [pendingGuide, setPendingGuide] = useState(false);
   const [helpTopic, setHelpTopic] = useState('start');
   const [view, setView] = useState<View>('home');
+  const [sidebarOpen,setSidebarOpen]=useState(false);
   const [pkg, setPkg] = useState<Package>();
   const [path, setPath] = useState('');
   const [devices, setDevices] = useState<Device[]>([]);
@@ -68,6 +73,7 @@ function App() {
   const [clock, setClock] = useState(Date.now());
   const [since, setSince] = useState(Date.now());
   const pending = useRef(0);
+  const welcomeHandled = useRef(false);
   const lastTransaction = useRef('');
   const verificationTransaction = useRef('');
   const revisions = useRef(new Map<string, number>());
@@ -123,7 +129,7 @@ function App() {
       }
       return value;
     } catch (e) {if (notice !== undefined) toast.dismiss(notice); reportError(String(e)); return undefined;}
-    finally {pending.current--; setBusy(pending.current > 0);}
+    finally {pending.current--; setBusy(pending.current > 0);if (android && pending.current === 0) toast.dismiss('mobile-import');}
   };
   const rebootDevice = async () => {
     if (!tx || restartPending) return;
@@ -156,11 +162,21 @@ function App() {
       if (event.type === 'transaction') {
         const next = event.data as Transaction;
         acceptTransaction(next);
-      } else if (event.type === 'transfer') setTransfer(event.data as Transfer);
+      } else if (event.type === 'import_progress') {
+        const data = event.data as {done:number;total:number;path:string};
+        if (data.total > 0 && data.done >= data.total) toast.dismiss('mobile-import');
+        else toast.loading((lang === 'zh' ? '正在导入 ' : 'Importing ') + gib(data.done) + (data.total > 0 ? ' / '+gib(data.total) : ''), {id:'mobile-import'});
+      }
+      else if (event.type === 'transfer') setTransfer(event.data as Transfer);
       else if (event.type === 'activity') setTransfer(undefined);
       else if (event.type === 'notice') {
         const notice = event.data as {code:string; label?:string};
-        if (notice.code === 'uninstall_journal_recovery') {
+        if (notice.code === 'adb_authorization') {
+          toast.info(lang === 'zh' ? '请在目标设备上允许当前控制端的 ADB 调试授权，然后刷新设备。' : 'Authorize this control device’s ADB key on the target, then refresh devices.');
+        } else if (notice.code === 'recovery_import_cleanup') {
+          const message=lang==='zh'?'记录已导入，临时解压目录未能清理。':'Record imported; temporary extraction could not be removed.';
+          toast.warning(message);append(message);
+        } else if (notice.code === 'uninstall_journal_recovery') {
           toast.info(t.uninstallJournalRecovery, {id:'uninstall-journal', duration:12000});
           append(t.uninstallJournalRecovery);
         } else if (notice.code === 'mtp_disabled') {
@@ -182,10 +198,20 @@ function App() {
   }, [append, acceptTransaction, reportError, t]);
   useEffect(() => {
     task(async () => {
-      const hello = await request<{package_path: string; transactions: Transaction[]}>('hello');
+      const hello = await request<{package_path: string; transactions: Transaction[]; active?:Transaction}>('hello');
+      if(welcomeHandled.current)return;
+      welcomeHandled.current=true;
       setPath(hello.package_path); setRecords(hello.transactions);
+      if (hello.active) {
+        acceptTransaction(hello.active,false);setView('progress');setPkg(hello.active.package);
+        setPath(hello.active.package.path);setSerial(hello.active.device.serial);return;
+      }
       const guide = !hello.transactions.length && !localStorage.getItem('onboarding-v1');
-      setPendingGuide(guide);setSupportOpen(true);
+      const welcome=!android||!sessionStorage.getItem('android-support-session-v1');
+      if(android&&welcome)sessionStorage.setItem('android-support-session-v1','shown');
+      setPendingGuide(welcome&&guide);
+      if(welcome)setSupportOpen(true);
+      else if(guide)setGuideOpen(true);
     });
   }, []);
   const verify = async (folder = path) => {
@@ -196,7 +222,7 @@ function App() {
   const refresh = async () => {
     setDevice(undefined);
     setDevicesLoaded(false);
-    const values = await task(() => request<Device[]>('devices'));
+    const values = await task(async () => {if (android) await request('usb_permission_retry');return request<Device[]>('devices');});
     if (values) {
       setDevices(values); setDevicesLoaded(true);
       if (values.length === 1) {setSerial(values[0].serial); if (values[0].serial !== serial) setDevice(undefined);}
@@ -273,15 +299,16 @@ function App() {
     }, t.exportedBackup);
   };
   const diagnosticText = async () => tx ? (await request<{text:string}>('diagnostics', {transaction:tx.id})).text : logs.join('\n');
-  const copyDiagnostics = () => task(async () => navigator.clipboard.writeText(await diagnosticText()), t.copied);
+  const copyText = async (text:string) => {if (android) await native('copy_text',{text});else await navigator.clipboard.writeText(text);};
+  const copyDiagnostics = () => task(async () => copyText(await diagnosticText()), t.copied);
   const exportLogs = async () => {
     await task(async () => {const target = await native('save_log');
       if (!target) return false;
       return invoke('write_log', {path: target, text: await diagnosticText()});
     }, t.exportedLog);
   };
-  const choosePackage = async () => {
-    const folder = await task(() => native('pick_package'));
+  const choosePackage = async (directory = false) => {
+    const folder = await task(() => native(directory ? 'pick_package_directory' : 'pick_package'));
     if (folder) {setPath(folder); await verify(folder);}
   };
   const openData = () => task(() => native('open_data'), t.openedData);
@@ -349,28 +376,51 @@ function App() {
     </div><p className="device-hint">{t.wirelessHelp}</p>
     {!reconnectOnly && devices.some(d => d.serial === serial && d.wireless) && <p className="device-hint wireless-target">{t.wirelessTarget}: <code>{serial}</code></p>}
   </details>;
-  return <div className="app-shell">
+  const mobileSteps = tx?.choices.method==='uninstall'&&['plan','progress'].includes(view)||view==='advanced'&&method==='uninstall'?t.uninstallSteps:t.steps;
+  useEffect(()=>{
+    if(!android)return;
+    const home=()=>{
+      if(busy||active)return;
+      void navigate('home');
+      requestAnimationFrame(()=>document.querySelector('main')?.scrollTo({top:0}));
+    };
+    const back=(event:Event)=>{
+      if(busy||active||view!=='home') {
+        event.preventDefault();
+        home();
+      }
+    };
+    window.addEventListener('openwrt:installer-home',home);
+    window.addEventListener('openwrt:app-back',back);
+    return()=>{
+      window.removeEventListener('openwrt:installer-home',home);
+      window.removeEventListener('openwrt:app-back',back);
+    };
+  },[busy,active,view]);
+  useEffect(()=>{if(android)document.documentElement.dataset.mobileBusy=String(busy||!!active);return()=>{if(android)delete document.documentElement.dataset.mobileBusy;};},[busy,active]);
+  return <div className="app-shell" data-view={view}>
     <header><div className="brand"><div className="brand-icon"><HardDrive size={20}/></div><div><strong>{t.title}</strong><small>{t.subtitle}</small></div></div>
-      <div className="preferences"><label className="sr-only" htmlFor="language">{t.language}</label><select id="language" value={lang} onChange={e => setLang(e.target.value as Language)}><option value="zh">中文</option><option value="en">English</option></select>
+      {android?<MobilePreferences language={lang} onLanguage={setLang} theme={theme} onTheme={setTheme} onHelp={openHelp} onAbout={()=>setSidebarOpen(true)}/>:<>      <div className="preferences"><label className="sr-only" htmlFor="language">{t.language}</label><select id="language" value={lang} onChange={e => setLang(e.target.value as Language)}><option value="zh">中文</option><option value="en">English</option></select>
         {theme === 'dark' ? <Moon size={16}/> : theme === 'light' ? <Sun size={16}/> : <Monitor size={16}/>}
-        <label className="sr-only" htmlFor="theme">{t.theme}</label><select id="theme" value={theme} onChange={e => setTheme(e.target.value as typeof theme)}><option value="system">{t.system}</option><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select><Button variant="ghost" className="help-trigger" onClick={openHelp} aria-label={help.help} title={`${help.help} (F1)`}><CircleHelp size={18}/><span>{help.help}</span></Button></div>
+        <label className="sr-only" htmlFor="theme">{t.theme}</label><select id="theme" value={theme} onChange={e => setTheme(e.target.value as typeof theme)}><option value="system">{t.system}</option><option value="light">{t.light}</option><option value="dark">{t.dark}</option></select><Button variant="ghost" className="help-trigger" onClick={openHelp} aria-label={help.help} title={`${help.help} (F1)`}><CircleHelp size={18}/><span>{help.help}</span></Button></div></>}
     </header>
-    <div className="workspace"><aside><button className="nav-home" disabled={busy || !!active} onClick={() => navigate('home')}><HardDrive size={17}/>{t.home}</button>
+    <div className="workspace">{android?<>{!['home','records'].includes(view)&&<div className="mobile-flowbar"><Button variant="ghost" className="mobile-home-action" disabled={busy||!!active} onClick={()=>navigate('home')} aria-label={t.home}><HardDrive size={18}/></Button><details className="mobile-step-details"><summary><span className="mobile-current-step">{current+1}</span><span><strong>{mobileSteps[current]}</strong><small>{current+1} / {mobileSteps.length}</small></span><ChevronDown size={16}/></summary><ol className="stepper" ref={stepperRef}>{mobileSteps.map((name,i)=><li key={name} className={i===current?'current':i<current?'done':''}><span>{i+1}</span><div>{name}</div></li>)}</ol></details></div>}</>:<><aside><button className="nav-home" disabled={busy || !!active} onClick={() => navigate('home')}><HardDrive size={17}/>{t.home}</button>
       <ol className="stepper" ref={stepperRef}>{(tx?.choices.method === 'uninstall' && ['plan','progress'].includes(view) || view === 'advanced' && method === 'uninstall' ? t.uninstallSteps : t.steps).map((name, i) => <li key={name} className={current === i ? 'current' : current > i ? 'done' : ''}><span>{current > i ? <Check size={14}/> : i+1}</span><div>{name}</div></li>)}</ol>
-      <div className="sidebar-bottom"><SupportInfo language={lang} onCopy={number => task(() => navigator.clipboard.writeText(number), `${t.groupCopied}: ${number}`)} onRepository={openRepository} onSupport={showSupport}/><div className="sidebar-note"><ShieldCheck size={19}/><p>{t.packageHint}</p></div>
+      <div className="sidebar-bottom" hidden={android&&!sidebarOpen}><SupportInfo language={lang} onCopy={number => task(() => copyText(number), `${t.groupCopied}: ${number}`)} onRepository={openRepository} onSupport={showSupport}/><div className="sidebar-note"><ShieldCheck size={19}/><p>{t.packageHint}</p></div>
       <Button variant="ghost" className="data-folder" disabled={busy} onClick={openData}><FolderOpen size={16}/>{t.openData}</Button></div>
-    </aside><main aria-busy={busy} className={waitingForOpenwrt ? 'boot-wait' : undefined}>
+    </aside></>}<main aria-busy={busy} className={waitingForOpenwrt ? 'boot-wait' : undefined}>
       <div className="busy-track" aria-hidden="true">{busy && <m.div animate={{opacity:reduceMotion ? 1 : [.4,1,.4]}} transition={{duration:1.3,repeat:reduceMotion ? 0 : Infinity}}/>}</div>
       <AnimatePresence initial={false} mode="wait" onExitComplete={() => requestAnimationFrame(() => pageRef.current?.querySelector<HTMLElement>('h1')?.focus({preventScroll:true}))}>
       <m.div key={view} ref={pageRef} className="page" initial={{opacity:0, y:reduceMotion ? 0 : 8}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:reduceMotion ? 0 : 0.16, ease:'easeOut'}}>
-      {view === 'home' && <><div className="eyebrow">OPENWRT · DESKTOP INSTALLER</div><h1 tabIndex={-1}>{lang === 'zh' ? '你想如何使用 OpenWrt？' : 'What would you like to do?'}</h1><p className="intro">{t.connect}</p>
+      {view === 'home' && <><div className="eyebrow">OPENWRT · {android ? 'ANDROID' : 'DESKTOP'} INSTALLER</div><h1 tabIndex={-1}>{lang === 'zh' ? '你想如何使用 OpenWrt？' : 'What would you like to do?'}</h1><p className="intro">{android ? t.connectMobile : t.connect}</p>
         <div className="guide-callout"><BookOpen size={20}/><div><strong>{help.firstTime}</strong><p>{help.firstTimeDesc}</p></div><Button variant="outline" onClick={showGuide}>{help.guide}<ArrowRight size={15}/></Button></div>
         <div className="purpose-list scroll-area">{purposes.map(({id, icon:Icon, title, description}, index) => <m.button initial={{opacity:0,y:reduceMotion ? 0 : 6}} animate={{opacity:1,y:0}} transition={{delay:reduceMotion ? 0 : index*0.025,duration:0.18}} whileHover={reduceMotion ? undefined : {x:3}} whileTap={reduceMotion ? undefined : {scale:0.992}} key={id} disabled={busy} onClick={() => navigate(id)} className="purpose"><div className="purpose-icon"><Icon size={21}/></div><div><h2>{title}</h2><p>{description}</p></div><ArrowRight size={18}/></m.button>)}</div>
+        {android&&<Button className="records-home-entry" variant="outline" disabled={busy||!!active} onClick={()=>void navigate('records')}><FolderOpen size={17}/>{lang==='zh'?'安装记录管理':'Manage installation records'}</Button>}
       </>}
       {['install','update','boot','advanced'].includes(view) && <><h1 tabIndex={-1}>{purposes.find(p => p.id === view)?.title}</h1><p className="intro">{purposes.find(p => p.id === view)?.description}</p>
         {view === 'update' && <div className="alert" role="note"><CircleAlert size={20}/><div><strong>{t.updateCompatibilityTitle}</strong><p>{t.updateCompatibilityWarning}</p></div></div>}
         <div className="page-scroll scroll-area"><section><div className="section-title"><h2>{t.package}</h2>{pkg && <span className="badge"><Check size={13}/>{t.verified}</span>}</div>
-          <div className="package-row"><div className="file-path" title={path}>{pkg?.release_version || pkg?.name || path || t.choosePackage}</div><Button variant="outline" disabled={busy} onClick={choosePackage}><FolderOpen size={16}/>{t.choosePackage}</Button><Button disabled={busy || !path} onClick={() => verify()}>{t.verify}</Button></div></section>
+          <div className="package-row"><div className="file-path" title={path}>{pkg?.release_version || pkg?.name || path || t.choosePackage}</div><Button variant="outline" disabled={busy} onClick={() => void choosePackage()}><FolderOpen size={16}/>{packageLabel}</Button><>{android && <Button variant="outline" disabled={busy} onClick={() => void choosePackage(true)}>{lang === 'zh' ? '选择已解压目录' : 'Extracted folder'}</Button>}</><Button disabled={busy || !path} onClick={() => verify()}>{t.verify}</Button></div></section>
         {view === 'update' ? <section><h2>{t.device}</h2><div className="form-grid"><label>{t.host}<input disabled={busy} value={host} onChange={e => setHost(e.target.value)} autoComplete="off"/></label><label>{t.password}<input disabled={busy} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off"/></label></div><p className="device-hint">{t.existingLogin}</p><Button variant="outline" disabled={busy || !pkg} onClick={async () => {setDevice(undefined); const d = await task(() => request<Device>('probe_update', {host, password}), t.inspected); if (d) setDevice(d);}}>{t.checkUpdate}</Button></section> : <section><div className="section-title"><h2>{t.device}</h2><Button variant="ghost" disabled={busy} onClick={refresh}><RefreshCw size={15}/>{t.refresh}</Button></div><div className="device-select"><Smartphone size={18}/><select disabled={busy} aria-label={t.select} value={serial} onChange={e => {setSerial(e.target.value); setDevice(undefined);}}><option value="">{devicesLoaded && !devices.length ? t.noDevicesShort : t.select}</option>{devices.map(d => <option key={d.serial} value={d.serial}>{d.label} · {d.wireless ? d.serial : '••••'+d.serial.slice(-4)} · {t.deviceStates[d.state as keyof typeof t.deviceStates] || d.state}</option>)}</select><Button variant="outline" disabled={!serial || !pkg || busy} onClick={inspect}>{t.inspect}</Button></div>{devicesLoaded && !devices.length && <p className="device-hint" role="status">{t.noDevices}</p>}{!pkg && <p className="device-hint">{t.inspectNeedsPackage}</p>}{wirelessControls()}</section>}
         {view === 'boot' && <section><h2>{t.visit}</h2><div className="form-grid"><label>{t.host}<input disabled={busy} value={host} onChange={e => setHost(e.target.value)} autoComplete="off"/></label><label>{t.password}<input disabled={busy} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off"/></label></div><p className="device-hint">{t.existingLogin}</p></section>}
         {device && <div className="device-card"><div><small>{t.model}</small><strong>{device.model || t.unknown}</strong></div><div><small>{t.os}</small><strong>{device.system || t.unknown}</strong></div><div><small>{t.slot}</small><strong>{device.slot || t.unknown}</strong></div><div><small>{t.root}</small><strong className={device.root ? 'good-text' : ''}>{device.root ? t.ready : t.unavailable}</strong></div></div>}
@@ -393,7 +443,8 @@ function App() {
         </div><label className="checkbox-label confirmation"><input disabled={busy} type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)}/>{tx.choices.method === 'uninstall' ? t.uninstallAccept : t.accept}</label>
         <div className="actions"><Button disabled={busy} variant="outline" onClick={() => {setView(planOrigin); setAccepted(false);}}>{t.back}</Button><Button variant={tx.plan.wipe || tx.choices.method === 'uninstall' ? 'destructive' : 'default'} disabled={!accepted || busy} onClick={() => start('start')}>{tx.choices.method === 'uninstall' ? t.startUninstall : t.start}<ArrowRight size={16}/></Button></div>
       </>}
-      {view === 'resume' && <><h1 tabIndex={-1}>{t.resume}</h1><p className="intro">{t.resumeDesc}</p><div className="resume-tools"><Button variant="outline" disabled={busy} onClick={async () => {const folder = await task(() => native('pick_recovery')); if (folder) {const value = await task(() => request<Transaction>('import', {path: folder}), t.imported); if (value) setRecords(old => [value, ...old.filter(r => r.id !== value.id)]);}}}><Upload size={16}/>{t.import}</Button><Button variant="outline" disabled={busy} onClick={choosePackage}><FolderOpen size={16}/>{t.choosePackage}</Button></div>
+      {view === 'records' && <RecordManager language={lang} busy={busy} run={task} onHome={()=>void navigate('home')} onResume={()=>void navigate('resume')} onDeleted={id=>{setRecords(old=>old.filter(r=>r.id!==id));if(tx?.id===id)setTx(undefined);}}/>}
+      {view === 'resume' && <><h1 tabIndex={-1}>{t.resume}</h1><p className="intro">{t.resumeDesc}</p><div className="resume-tools"><Button variant="outline" disabled={busy} onClick={async () => {const folder = await task(() => native('pick_recovery')); if (folder) {const value = await task(() => request<Transaction>('import', {path: folder}), t.imported); if (value) setRecords(old => [value, ...old.filter(r => r.id !== value.id)]);}}}><Upload size={16}/>{t.import}</Button><Button variant="outline" disabled={busy} onClick={() => void choosePackage()}><FolderOpen size={16}/>{packageLabel}</Button></div>
         {records.some(record => record.choices.method === 'uninstall') && <details className="wireless-adb"><summary>{t.reconnectDevice}</summary><p className="device-hint">{t.reconnectHelp}</p><Button variant="outline" disabled={busy} onClick={refresh}><RefreshCw size={15}/>{t.refresh}</Button><label>{t.reconnectDevice}<select disabled={busy} value={reconnectSerial} onChange={event => setReconnectSerial(event.target.value)}><option value="">{t.keepRecordedDevice}</option>{devices.map(entry => <option key={entry.serial} value={entry.serial}>{entry.model || entry.label || t.device} · {entry.serial} · {entry.state}</option>)}</select></label>{wirelessControls()}</details>}
         <label className="resume-password"><span>{t.password}</span><input disabled={busy} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off"/></label>
         <div className="records-list scroll-area">{!records.length && <p className="empty-state">{t.noRecords}</p>}{records.map(r => <section className="record" key={r.id}><div><h2>{r.device.model}</h2><p>{r.choices.method === 'boot' ? t.boot : r.choices.method === 'update' ? t.update : (t as unknown as Record<string,string>)[r.choices.method]} · ••••{r.device.serial.slice(-4)}</p><p>{stageLabel(r.stage)} · {statusLabel(r.status)}</p><small>{new Date(r.updated*1000).toLocaleString()} · {r.id.slice(0,8)}</small></div><Button disabled={busy} onClick={() => continueRecord(r)}>{r.status === 'ready' ? r.choices.method === 'uninstall' ? t.reviewUninstall : t.review : r.choices.method === 'uninstall' ? t.continueUninstall : t.continue}<ArrowRight size={16}/></Button></section>)}</div>
@@ -401,7 +452,7 @@ function App() {
       {view === 'progress' && tx && <><div className="eyebrow">{t.progress} · {tx.device.model}</div><h1 tabIndex={-1}>{tx.status === 'completed' ? tx.choices.method === 'uninstall' ? t.successUninstall : tx.choices.method === 'boot' ? t.successBoot : tx.choices.method === 'update' ? t.successUpdate : t.success : manualRestart ? t.rebootNow : waitingForOpenwrt && tx.choices.method === 'update' ? tx.details?.connection_state === 'reconnecting' ? t.updateReconnecting : t.updateReboot : stageLabel(tx.stage)}</h1><div className="status-line"><span className={'status-dot '+tx.status}/><span>{statusLabel(tx.status)}</span><span className="elapsed">{t.elapsed} {elapsed}s</span></div>
         {waitingForOpenwrt && <div className="boot-guidance"><Smartphone size={21}/><p>{tx.choices.method === 'update' ? t.updateRebootDesc : tx.details?.boot_confirmed ? t.bootConfirmed : manualRestart ? t.rebootManual : t.rebootAutomatic}</p></div>}
         <div className="page-scroll scroll-area">{tx.status === 'completed' ? <section className="success-panel"><m.div className="success-icon" initial={{opacity:0,scale:reduceMotion ? 1 : .9}} animate={{opacity:1,scale:1}} transition={{duration:reduceMotion ? 0 : .24}}><CheckCircle2 size={42} className="good-text"/></m.div><dl className="plan-list"><div><dt>{tx.choices.method === 'uninstall' ? t.androidActual : t.actual}</dt><dd>{gib(tx.result?.filesystem_bytes)}</dd></div>{tx.choices.method !== 'uninstall' && <div><dt>{t.visit}</dt><dd>{tx.result?.url}</dd></div>}</dl><h2>{t.next}</h2><p>{tx.choices.method === 'uninstall' ? t.uninstallNext : tx.choices.method === 'update' ? t.updateNext : t.nextDesc}</p>{tx.choices.method !== 'uninstall' && <p className="device-hint login-hint">{['update','boot'].includes(tx.choices.method) ? t.existingLogin : t.defaultLogin}</p>}</section> : <>
-          {waitingForOpenwrt ? <div className="network-guidance"><p>{t.waitingOpenwrt}</p><Button variant="ghost" className="context-help" onClick={openHelp}><CircleHelp size={16}/>{help.currentHelp}</Button></div> : <section className="activity"><m.div key={tx.stage+tx.status} className="activity-heading" initial={{opacity:reduceMotion ? 1 : 0,y:reduceMotion ? 0 : 4}} animate={{opacity:1,y:0}} transition={{duration:reduceMotion ? 0 : .18}}>{tx.status === 'failed' ? <CircleAlert size={28}/> : tx.status === 'running' ? <LoaderCircle size={28} className="spin"/> : tx.status.startsWith('waiting') ? <Smartphone size={28}/> : <Pause size={28}/>}<div><h2>{stageLabel(tx.stage)}</h2><p>{tx.package.name}{tx.details?.tool ? " · "+tx.details.tool : ""}</p></div></m.div>
+          {waitingForOpenwrt ? <div className="network-guidance"><p>{t.waitingOpenwrt}</p><Button variant="ghost" className="context-help" onClick={openHelp}><CircleHelp size={16}/>{help.currentHelp}</Button></div> : <section className="activity"><m.div key={tx.stage+tx.status} className="activity-heading" initial={{opacity:reduceMotion ? 1 : 0,y:reduceMotion ? 0 : 4}} animate={{opacity:1,y:0}} transition={{duration:reduceMotion ? 0 : .18}}>{tx.status === 'failed' ? <CircleAlert size={28}/> : tx.status === 'running' ? <LoaderCircle size={28} className="spin"/> : tx.status.startsWith('waiting') ? <Smartphone size={28}/> : <Pause size={28}/>}<div><h2>{stageLabel(tx.stage)}</h2><p className="activity-package" title={(tx.package.release_version||tx.package.name)+(tx.details?.tool?" · "+tx.details.tool:"")}>{tx.package.release_version||tx.package.name}{tx.details?.tool ? " · "+tx.details.tool : ""}</p></div></m.div>
             <div className="stage-progress"><small>{t.phase} {Math.min(5,stateGroup(tx.stage)+1)} / 5 · {statusLabel(tx.status)}</small>{(!transfer || tx.status !== 'running') && <><div className={'indeterminate-progress '+(tx.status === 'running' ? 'is-running' : '')} role="progressbar" aria-label={t.stageProgress} aria-valuetext={`${stageLabel(tx.stage)} · ${statusLabel(tx.status)}`}><div/></div><small>{tx.status === 'running' ? t.noPercentage : statusLabel(tx.status)}</small></>}</div>
             {transfer && tx.status === 'running' && <div className="transfer"><div><span>{transfer.name}</span><span>{Math.floor(transfer.bytes/transfer.total*100)}%</span></div><progress value={transfer.bytes} max={transfer.total}/><small>{t.bytes}: {transfer.bytes.toLocaleString()} / {transfer.total.toLocaleString()} B · {t.speed}: {(transfer.bytes_per_second/1048576).toFixed(1)} MiB/s</small></div>}
             {tx.status.startsWith('waiting') && <><p className="waiting-guidance">{tx.choices.method === 'uninstall' && tx.stage === 'uninstall_offline' ? t.uninstallWaiting : waitingNV ? t.nvRecoveryWaiting : tx.stage === 'openwrt_boot' ? t.waitingOpenwrt : t.waitingAndroid}</p><Button variant="ghost" className="context-help" onClick={openHelp}><CircleHelp size={16}/>{help.currentHelp}</Button></>}
@@ -413,7 +464,7 @@ function App() {
             {tx.error && <div className="alert danger"><CircleAlert size={20}/><div><p className="error-message">{tx.error.message}</p><Button className="copy-diagnostics" variant="outline" disabled={busy} onClick={copyDiagnostics}><Copy size={15}/>{t.copyDiagnostics}</Button></div></div>}
           </section>}</>} </div>
         {waitingForOpenwrt && <div className="verification-controls"><div className="form-grid"><label>{t.host}<input disabled={busy} value={host} onChange={e => setHost(e.target.value)} autoComplete="off"/></label><label>{t.password}<input disabled={busy} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off"/></label></div>{tx.choices.method !== 'uninstall' && <p className="device-hint login-hint">{['update','boot'].includes(tx.choices.method) ? t.existingLogin : t.defaultLogin}</p>}{tx.details?.verification_error && <p className="verification-error" role="status">{tx.details.verification_error}</p>}</div>}
-        {tx.status !== 'completed' && !waitingNV && !waitingOnline && <div className="actions">{manualRestart && <Button disabled={busy || restartPending} onClick={rebootDevice}>{restartPending ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>} {restartPending ? t.rebootSending : t.rebootDevice}</Button>}{waitingForOpenwrt && <Button variant={manualRestart ? "outline" : "default"} disabled={busy || restartPending || !host.trim()} onClick={() => task(async () => (await request<{accepted:boolean}>('verify_openwrt', {transaction:tx.id, host:host.trim(), password})).accepted, t.verificationRequested)}><CheckCircle2 size={16}/>{t.confirmOpenwrt}</Button>}{active ? <Button variant="outline" disabled={busy} onClick={() => task(async () => (await request<{accepted:boolean}>('cancel')).accepted, t.pauseRequested)}><Pause size={16}/>{t.pause}</Button> : <Button disabled={busy || tx.error?.retryable === false} onClick={() => start('retry')}>{t.retry}<RotateCcw size={16}/></Button>}</div>
+        {tx.status !== 'completed' && !waitingNV && !waitingOnline && <div className={'actions progress-actions'+(waitingForOpenwrt?' has-verification':'')}>{manualRestart && <Button disabled={busy || restartPending} onClick={rebootDevice}>{restartPending ? <LoaderCircle size={16} className="spin"/> : <RefreshCw size={16}/>} {restartPending ? t.rebootSending : t.rebootDevice}</Button>}{waitingForOpenwrt && <Button variant={manualRestart ? "outline" : "default"} disabled={busy || restartPending || !host.trim()} onClick={() => task(async () => (await request<{accepted:boolean}>('verify_openwrt', {transaction:tx.id, host:host.trim(), password})).accepted, t.verificationRequested)}><CheckCircle2 size={16}/>{t.confirmOpenwrt}</Button>}{active ? <Button variant="outline" disabled={busy} onClick={() => task(async () => (await request<{accepted:boolean}>('cancel')).accepted, t.pauseRequested)}><Pause size={16}/>{t.pause}</Button> : <Button disabled={busy || tx.error?.retryable === false} onClick={() => start('retry')}>{t.retry}<RotateCcw size={16}/></Button>}</div>
         }
         <div className="backup-actions"><Button disabled={busy} variant="outline" onClick={exportBackup}><Download size={16}/>{t.exportBackup}</Button><Button disabled={busy} variant="ghost" onClick={openData}><FolderOpen size={16}/>{t.openData}</Button></div>
       </>}
@@ -460,8 +511,9 @@ function App() {
         <div className="dialog-footer"><Button disabled={busy} variant="outline" onClick={() => setResetPrompt(undefined)}>{t.uninstallCancel}</Button><Button disabled={busy} variant="destructive" onClick={() => plan(resetPrompt.reset_token,resetPrompt.model_token,'yes')}>{t.uninstallChooseReset}</Button></div>
       </DialogContent>
     </Dialog>}
+    {android&&<Dialog open={sidebarOpen} onOpenChange={setSidebarOpen}><DialogContent className="mobile-about-dialog" closeLabel={help.close}><div className="dialog-heading"><DialogTitle>{lang==='zh'?'关于与备份':'About & backups'}</DialogTitle><DialogDescription>OpenWrt Tools · v1.0</DialogDescription></div><div className="mobile-about-body"><SupportInfo language={lang} onCopy={number=>task(()=>copyText(number),`${t.groupCopied}: ${number}`)} onRepository={openRepository} onSupport={()=>{setSidebarOpen(false);showSupport();}}/><p className="device-hint">{lang==='zh'?'导入完整 ZIP 或已解压目录，校验后再检查目标设备。':'Import a complete ZIP or extracted folder, then verify it before inspecting the target.'}</p><Button variant="outline" disabled={busy||!!active} onClick={()=>{setSidebarOpen(false);void navigate('records');}}><FolderOpen size={17}/>{lang==='zh'?'安装记录管理':'Manage installation records'}</Button><Button variant="outline" disabled={busy} onClick={openData}><FolderOpen size={17}/>{t.openData}</Button><p className="device-hint">{lang==='zh'?'备份和安装记录保存在 App 私有空间，请及时导出。':'Backups and recovery records are app-private. Export them for safekeeping.'}</p><small>USB / SSH · {pkg?.profile||'—'}</small></div><div className="dialog-footer"><Button variant="outline" onClick={()=>setSidebarOpen(false)}>{lang==='zh'?'关闭':'Close'}</Button></div></DialogContent></Dialog>}
     {supportOpen && <SupportDialog language={lang} onOpenChange={changeSupport} onRepository={openRepository}/>}
-    <Toaster theme={theme} containerAriaLabel={t.notifications} toastOptions={{closeButtonAriaLabel:t.dismiss, classNames:{toast:"app-toast",description:"toast-description"}}}/>
+    <Toaster {...(android?{position:"bottom-center" as const,offset:{bottom:88,left:16,right:16},mobileOffset:{bottom:88,left:16,right:16}}:{})} theme={theme} containerAriaLabel={t.notifications} toastOptions={{closeButtonAriaLabel:t.dismiss, classNames:{toast:"app-toast",description:"toast-description"}}}/>
   </div>;
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><MotionConfig reducedMotion="user"><LazyMotion features={domAnimation} strict><App/></LazyMotion></MotionConfig></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode><MotionConfig reducedMotion="user"><LazyMotion features={domAnimation} strict><MobileTools/><App/></LazyMotion></MotionConfig></React.StrictMode>);
