@@ -25,8 +25,8 @@ APK 文件为 `op-system-switcher.apk`，包名保留 `com.minikano.e5switch`，
 
 ## UFI 网页插件
 
-完整安装包另附 `extras/openwrt-system-switch-plugin.js`。v5 支持 E5、T551M、
-M8、T512N、远航 41S（ZTE 7546N）和守护宝 K1，以及 MU300 系列。
+完整安装包另附 `extras/openwrt-system-switch-plugin.js`。v7 不限制 Android
+型号或平台名称；从备用槽已安装的镜像识别 E5/MU300 启动格式。
 E5 系列不再要求 Android 固定在 A 槽，也不再以 `verifiedbootstate=orange`
 作为切换前提；仍核对已安装的 OpenWrt 镜像格式、当前 Android 槽位和 misc CRC。
 

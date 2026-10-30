@@ -36,6 +36,8 @@ def refresh(source,target,tools,revision,native=None):
         'files/device-flash-boot.sh':'openwrt/device-flash-boot.sh',
         'files/nv-persistence.py':'openwrt/luci-app-t551m/root/usr/lib/e5/nv_persistence.py',
         'scripts/tools/e5-update.py':'tools/e5-update.py',
+        'extras/openwrt-system-switch-plugin.js':'openwrt/bundle/【没刷op的别用，百分百变砖】op系统切换器.js',
+        'docs/ANDROID-SWITCHER.md':'tools/switch-apk/README.md',
     }.items():
         replacement[name]=(TOP/path).read_bytes().replace(b'\r\n',b'\n')
     with zipfile.ZipFile(source) as original:

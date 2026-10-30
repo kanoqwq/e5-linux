@@ -242,7 +242,7 @@ def main():
     runpy.run_path(str(TOP / 'openwrt/prepare-ext4-tools.py'))['build_lock'](root, files / 'ext4-tools.tar', files / 'install-lock-tools.tar')
     runpy.run_path(str(TOP / 'openwrt/bundle/install-entrypoints.py'))['assemble'](package)
     extras = package / 'extras'; extras.mkdir()
-    shutil.copy2(TOP / 'openwrt/bundle/【插件】mu300系统切换器.js', extras / 'openwrt-system-switch-plugin.js')
+    shutil.copy2(TOP / 'openwrt/bundle/【没刷op的别用，百分百变砖】op系统切换器.js', extras / 'openwrt-system-switch-plugin.js')
     for n in ('device-install-image.sh', 'device-flash-boot.sh', 'device-install-part.sh', 'device-stage-part-update.sh'):
         shutil.copy2(TOP / 'openwrt' / n, files / n)
     (files / 'part-write.sh').write_bytes((TOP / 'openwrt/bundle/part-write.sh').read_bytes().replace(b'\r\n', b'\n'))
