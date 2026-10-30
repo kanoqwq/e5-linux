@@ -47,7 +47,8 @@ def main():
     if not a.skip_ui:
         run(npm,'ci','--no-audit','--no-fund','--registry=https://registry.npmjs.org',cwd=HERE/'ui')
         run(npm,'run','tauri','--','build','--no-bundle',cwd=HERE/'ui')
-    work = HERE.parent/('work/installer-backend-macos' if mac else 'work/installer-backend')
+    work_base = Path(os.environ.get('OPENWRT_TOOLS_WORK', str(HERE/'work')))
+    work = work_base/('installer-backend-macos' if mac else 'installer-backend')
     run(sys.executable,'-m','PyInstaller','--noconfirm','--clean','--noupx','--optimize','2','--onedir','--console',
         '--name','openwrt-backend','--distpath',work/'dist','--workpath',work/'build','--specpath',work,
         '--hidden-import','lz4.block','--hidden-import','xml.etree.ElementTree','--hidden-import','xml.parsers.expat',
@@ -76,7 +77,7 @@ def main():
             shutil.copy2(a.adb_dir/name, tools/('ADB-NOTICE.txt' if name=='NOTICE.txt' else name))
     else:
         dependency = json.loads((HERE/('platform-tools-macos.json' if mac else 'platform-tools.json')).read_text(encoding='utf-8'))
-        cache = HERE.parent/'work/installer-platform-tools'/('platform-tools-macos-pinned.zip' if mac else 'platform-tools-pinned.zip')
+        cache = work_base/'installer-platform-tools'/('platform-tools-macos-pinned.zip' if mac else 'platform-tools-pinned.zip')
         cache.parent.mkdir(parents=True,exist_ok=True)
         if not cache.is_file() or digest(cache) != dependency['sha256']:
             urllib.request.urlretrieve(dependency['url'],cache)

@@ -22,7 +22,7 @@ npm --prefix ui run build
 在 WSL 仓库目录用固定 runner 调用本机 PowerShell。已有本机 Python C:\Python312\python.exe、Node/Rust 环境；ADB 输入使用已有 platform-tools，不重复下载。
 
 ```sh
-python3 tools/build-release.py run --workspace /home/kano/openwrt-build --label windows -- /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command 'Set-Location D:\Git\e5-linux\installer; & C:\Python312\python.exe build.py --adb-dir D:/Git/e5-linux/work/installer-platform-tools/platform-tools; exit $LASTEXITCODE'
+python3 tools/build-release.py run --workspace /home/kano/openwrt-build --label windows -- /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command 'Set-Location D:\Git\e5-linux\installer; $env:OPENWRT_TOOLS_WORK="D:/Git/e5-linux/work"; & C:\Python312\python.exe build.py --adb-dir D:/Git/e5-linux/work/installer-platform-tools/platform-tools; exit $LASTEXITCODE'
 ```
 
 仅当已核实当前 UI/Rust 源码与现有二进制一致才能使用 --skip-ui。sources()、二进制摘要和运行资源必须匹配，不得手改 build.json 冒充重编。
