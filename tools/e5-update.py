@@ -257,7 +257,8 @@ def main():
         with __import__('tempfile').TemporaryDirectory() as temporary:
             image = bytearray(bound_boot)
             if layout == 'part':
-                image[44:1580] = b'e5.part_v=2 e5.root=part e5.part_update=1'.ljust(1536, b'\0')
+                pad = b'e5.lkpad=0000000000 ' if image[44:1580].startswith(b'e5.lkpad=') else b''
+                image[44:1580] = (pad + b'e5.part_v=2 e5.root=part e5.part_update=1').ljust(1536, b'\0')
             head = Path(temporary) / 'boot-head.img'
             head.write_bytes(image[:boot['persist_log_offset']])
             for name in ('openwrt.ext4.gz', 'ext4-tools.tar', 'device-install-image.sh',
