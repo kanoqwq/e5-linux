@@ -232,6 +232,9 @@ def main():
             subprocess.run(['python3', str(TOP/'devices/common/test_dwc3_host_sink.py')],
                            env=dict(os.environ, E5_TEST_KERNEL=str(source)), check=True)
         if args.profile in ('e5', 't551m', 't512n', 'lym10k'):
+            for test in ('test_usb_gadget_session.py', 'test_usb_host_start.py',
+                         'test_usb_host_lifecycle.py'):
+                subprocess.run(['python3', str(TOP/'devices/t551m'/test), str(source)], check=True)
             subprocess.run(['python3', str(TOP/'devices/common/test_musb_host_sink.py')],
                            env=dict(os.environ, MUSB_TEST_KERNEL=str(source)), check=True)
         for test in ('test_fuel_gauge.py','test_fgu_latch.py','test_charger_jeita.py',
@@ -242,6 +245,7 @@ def main():
         if args.profile=='e5':
             subprocess.run(['python3',str(TOP/'devices/e5/test_charger.py'),str(source)],check=True)
             subprocess.run(['python3',str(TOP/'devices/e5/test_charger_readback.py'),str(source)],check=True)
+            subprocess.run(['python3',str(TOP/'devices/e5/test_otg_readback.py'),str(source)],check=True)
         subprocess.run(['python3',str(TOP/'upstream/check-container-support.py'),str(out)],check=True)
         (out/'repository-commit').write_bytes(git(TOP,'rev-parse','HEAD'))
         (out/'kernel-source-commit').write_text(local['revision']+'\n')

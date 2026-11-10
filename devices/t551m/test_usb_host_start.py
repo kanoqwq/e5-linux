@@ -23,12 +23,14 @@ typedef uint8_t u8;
 enum {MUSB_DEVCTL, MUSB_INTRTXE, MUSB_INTRRXE, MUSB_INTRUSBE, MUSB_TESTMODE, MUSB_POWER};
 enum {MUSB_POWER_ISOUPDATE=0x80, MUSB_POWER_HSENAB=0x20, MUSB_DEVCTL_SESSION=1,
       MUSB_DEVCTL_VBUS=0x18, MUSB_HOST=1, MUSB_OTG=3, USB_SPEED_HIGH=3,
-      USB_SPEED_UNKNOWN=0, OTG_STATE_A_WAIT_BCON=7, USB_DR_MODE_HOST=1};
+      USB_SPEED_UNKNOWN=0, OTG_STATE_A_WAIT_BCON=7, OTG_STATE_B_IDLE=1,
+      MUSB_DMA_SPRD=0x400, USB_DR_MODE_HOST=1};
 struct config {int maximum_speed;};
+struct ops {int quirks;};
 struct musb { unsigned char *mregs; unsigned short intrtxe,intrrxe,epmask;
-    int is_active,port_mode,state,softconnect; struct config *config; };
+    int is_active,port_mode,state,softconnect; struct config *config; struct ops *ops; };
 struct sprd_glue {int dr_mode;};
-static int locked,host,resumed,reset;
+static int locked,host,resumed,reset,data_role;
 #define musb_dbg(...) ((void)0)
 #define MUSB_HST_MODE(m) (host=1)
 #define spin_lock_irq(p) (locked=1)
@@ -44,18 +46,21 @@ static void musb_platform_enable(struct musb *m) {
     m->is_active=1; m->mregs[MUSB_DEVCTL] |= MUSB_DEVCTL_SESSION;
 }
 static void musb_host_resume_root_hub(struct musb *m) {assert(!locked); resumed++;}
+static void sprd_external_data_role(struct sprd_glue *g,bool host_mode) {
+    assert(!locked && host_mode); data_role++;
+}
 '''
 test = r'''
 int main(void) {
     for (int stale=0; stale<3; stale++) {
-        unsigned char regs[6]={0}; struct config cfg={USB_SPEED_HIGH};
+        unsigned char regs[6]={0}; struct config cfg={USB_SPEED_HIGH};struct ops ops={MUSB_DMA_SPRD};
         struct musb m={.mregs=regs,.config=&cfg,.epmask=0xff,.port_mode=MUSB_OTG,
-            .softconnect=1,.is_active=1}; struct sprd_glue g={0};
+            .softconnect=1,.is_active=1,.ops=&ops}; struct sprd_glue g={0};
         /* Cold boot, disconnected gadget, and previously suspended host. */
         regs[MUSB_POWER] = stale ? 0xe3 : 0;
         regs[MUSB_INTRUSBE] = stale ? 4 : 0;
         regs[MUSB_DEVCTL] = stale ? MUSB_DEVCTL_VBUS : 0;
-        locked=host=resumed=reset=0;
+        locked=host=resumed=reset=data_role=0;
         start_host(&g,&m);
         assert(g.dr_mode==USB_DR_MODE_HOST && host && !locked);
         assert(m.state==OTG_STATE_A_WAIT_BCON && !m.softconnect);
@@ -63,7 +68,7 @@ int main(void) {
         assert(regs[MUSB_DEVCTL]&MUSB_DEVCTL_SESSION);
         assert(regs[MUSB_INTRUSBE]==0xf7);
         assert(regs[MUSB_INTRTXE]==0xff && regs[MUSB_INTRRXE]==0xfe);
-        assert(resumed==1 && reset==1);
+        assert(resumed==1 && reset==1 && data_role==1);
     }
     puts("PASS: cold/gadget/suspended-host startup restores IRQs, speed, session and root hub");
 }

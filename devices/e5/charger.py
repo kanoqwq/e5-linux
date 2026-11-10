@@ -113,6 +113,13 @@ def apply(kernel, replace_function):
 def apply_state(path, replace_function):
     """Keep accepted charge commands and the AW state coherent, as stock does."""
     text = path.read_text()
+    text = replace_function(text, 'aw32257_otg_charger_vbus_is_enabled', '''
+\tstruct aw32257_device *info = rdev_get_drvdata(dev);
+\t/* e5-aw32257-otg-readback-v1: boost is REG01 OPA_MODE (bit 0).
+\t * The inherited mask=1, shift=3 can never report an enabled rail.
+\t */
+\treturn aw32257_i2c_read_bit(info, AW32257_REG_CONTROL,
+\t\tAW32257_BIT_OPA_MODE);''')
     # Since the power-supply core checks the descriptor before get_property(),
     # implementing CALIBRATE in the getter alone is insufficient. CM uses this
     # vendor property to read CE, not to recalibrate the battery.

@@ -12,8 +12,11 @@ const topbar = document.querySelector('.topbar');
 
 const SE_AIDS = ['A06573746B6D65FFFF4953442D522030', 'A06573746B6D65FFFF4953442D522031'];
 const POLL_MS = 1000;
-const THEME_VARS = ['--bg', '--surface-rgb', '--button-rgb', '--active-rgb', '--text', '--dim',
- '--line', '--accent', '--ui-opacity'];
+const THEME_VARS = ['--bg', '--surface-rgb', '--button-rgb', '--active-rgb', '--danger-rgb',
+ '--text', '--dim', '--line', '--accent', '--poor', '--ui-opacity', '--surface-alpha',
+ '--ui-scale', '--wallpaper-wash'];
+let themeObserver = null;
+let themeWindow = null;
 
 const TR = {
  "Cannot reach the eSIM": "eSIM’e erişilemiyor",
@@ -270,6 +273,10 @@ const JOB_ERRORS = {
  ]
 };
 Object.assign(TR,{
+ "No eUICC detected": "eUICC algılanmadı",
+ "Insert a physical eSIM (eUICC) in this slot, or select another slot. Ordinary SIM cards cannot be managed here.": "Bu yuvaya fiziksel bir eSIM (eUICC) takın veya başka bir yuva seçin. Normal SIM kartlar burada yönetilemez.",
+ "Cannot read this card right now": "Bu kart şu anda okunamıyor",
+ "Read again": "Yeniden oku",
  "eSIM trust certificate is missing or damaged; update the complete firmware": "eSIM güven sertifikası eksik veya bozuk; tam aygıt yazılımını güncelleyin",
  "Server certificate verification failed; check the device clock and CA certificates": "Sunucu sertifikası doğrulanamadı; cihaz saatini ve CA sertifikalarını kontrol edin",
  "Operator server connection timed out": "Operatör sunucusu bağlantısı zaman aşımına uğradı",
@@ -298,8 +305,8 @@ function failureText(value) {
  const error = failure.error;
  const detail = failure.detail;
  if (JOB_ERRORS[error]) return t(...JOB_ERRORS[error]);
- if (error === 'euicc_init')
-  return t('无法访问 eSIM', 'Cannot reach the eSIM');
+ if (error === 'euicc_init' || error === 'esim_select')
+  return t('未识别到 eUICC', 'No eUICC detected');
  if (error === 'activation_code' || error === 'matching_id')
   return t('激活码无效', 'The activation code is invalid');
  if (error === 'confirmation_code' && detail === 'required')
@@ -344,7 +351,31 @@ function syncTheme() {
  });
  root.dataset.theme = host.dataset.theme || 'dark';
  root.classList.toggle('desktop-wallpaper', host.classList.contains('desktop-wallpaper'));
+ root.classList.toggle('compact', host.classList.contains('compact'));
+ root.classList.toggle('no-motion', host.classList.contains('no-motion'));
  root.style.setProperty('--desktop-wallpaper', host.style.getPropertyValue('--desktop-wallpaper'));
+ const frame = window.frameElement;
+ const rect = frame ? frame.getBoundingClientRect() : { top: 0, left: 0 };
+ root.style.setProperty('--wallpaper-height', window.parent.innerHeight + 'px');
+ root.style.setProperty('--wallpaper-width', window.parent.innerWidth + 'px');
+ root.style.setProperty('--wallpaper-offset', -rect.top + 'px');
+ root.style.setProperty('--wallpaper-left', -rect.left + 'px');
+}
+
+function watchTheme() {
+ try {
+  if (window.parent === window || !window.parent.document.body)
+   return;
+  themeWindow = window.parent;
+  themeObserver = new MutationObserver(syncTheme);
+  themeObserver.observe(themeWindow.document.body, {
+   attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-accent']
+  });
+  themeWindow.addEventListener('resize', syncTheme);
+  window.addEventListener('resize', syncTheme);
+ } catch (error) {
+  // A standalone or cross-origin host keeps the app's local palette.
+ }
 }
 
 function h(tag, attrs, children) {
@@ -1337,12 +1368,23 @@ function rootNodes() {
   ]));
  }
  if (!slot.chip && !slot.profiles) {
-  const reason = slot.chipError === 'euicc_init'
-   ? t('该卡槽没有 eUICC', 'No eUICC in this slot')
+  const unavailable = ['euicc_init', 'esim_select', 'not_euicc'].includes(slot.chipError);
+  const title = unavailable ? t('未识别到 eUICC', 'No eUICC detected')
+   : t('暂时无法读取卡片', 'Cannot read this card right now');
+  const hint = unavailable
+   ? t('请确认当前卡槽插有实体 eSIM 卡（eUICC），或切换其他卡槽。普通 SIM 卡无法在此管理。',
+    'Insert a physical eSIM (eUICC) in this slot, or select another slot. Ordinary SIM cards cannot be managed here.')
    : slot.chipError ? failureText({error:slot.chipError}) : t('无法读取 eSIM 信息', 'Cannot read the eSIM');
-  nodes.push(card([
-   message(reason),
-   h('div', { class: 'actions' }, [button(t('重试', 'Retry'), 'primary', 'retry', loadSlot)])
+  const icon = h('span', { class: 'empty-icon', 'aria-hidden': 'true' });
+  icon.innerHTML = '<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h11a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3V8z"/><rect x="11" y="13" width="10" height="10" rx="2"/><path d="M16 13v10m-5-5h10"/></svg>';
+  nodes.push(h('section', { class: 'state-card empty-state', 'data-state': unavailable ? 'unsupported' : 'error' }, [
+   icon,
+   h('strong', { class: 'state-title', text: title }),
+   h('p', { class: 'state-hint', text: hint }),
+   h('div', { class: 'actions' }, [
+    button(t('重新读取', 'Read again'), 'secondary', 'retry', loadSlot),
+    button(t('返回', 'Back'), 'primary', 'exit', () => e5.exit())
+   ])
   ]));
   return nodes;
  }
@@ -1873,8 +1915,12 @@ window.addEventListener('pagehide', () => {
  state.disposed = true;
  stopStatusPoll();
  stopJobPoll();
+ if (themeObserver) themeObserver.disconnect();
+ if (themeWindow) themeWindow.removeEventListener('resize', syncTheme);
+ window.removeEventListener('resize', syncTheme);
 });
 
 document.documentElement.lang = zh() ? 'zh' : e5.lang === 'tr' ? 'tr' : 'en';
+watchTheme();
 render();
 checkStatus(true);

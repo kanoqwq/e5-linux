@@ -18,7 +18,61 @@ def apply(kernel):
     if new not in text:
         assert text.count(old) == 1, 'Unexpected OTG probe registration'
         text = text.replace(old, new, 1)
+    # CC, not the generic MUSB OTG FSM, starts sessions on SPRD. Binding a
+    # gadget with no cable puts the core in B_IDLE. musb_start() otherwise
+    # asserts SESSION there, and IRQ work takes a separate runtime-PM hold;
+    # the glue then cannot suspend before its first real host transition.
+    start = text.index('void musb_start(')
+    end = text.index('\n/*', start)
+    body = text[start:end]
+    old = '\t} else {\n\t\tdevctl |= MUSB_DEVCTL_SESSION;\n\t}\n'
+    new = '''\t} else if (!(musb->ops->quirks & MUSB_DMA_SPRD) ||
+\t\t   musb->port_mode != MUSB_OTG ||
+\t\t   musb_get_state(musb) != OTG_STATE_B_IDLE) {
+\t\t/* SPRD CC owns role selection. An unconnected gadget must not
+\t\t * create a host session and pin runtime PM before CC selects host.
+\t\t */
+\t\tdevctl |= MUSB_DEVCTL_SESSION;
+\t}
+'''
+    if new not in body:
+        assert body.count(old) == 1, 'Unexpected MUSB session startup'
+        body = body.replace(old, new, 1)
+        text = text[:start] + body + text[end:]
+    # The vendor role worker takes/releases the controller reference around
+    # each real peripheral/host session. DEVCTL is not its cable detector:
+    # after a cold gadget bind it can stay at 0x99 with no external VBUS.
+    # Generic IRQ session accounting then pins the child, preventing glue
+    # autosuspend and therefore the first CC-selected host transition.
+    start = text.index('static void musb_pm_runtime_check_session(')
+    end = text.index('\nstatic ', start + 10)
+    body = text[start:end]
+    marker = '\tdevctl = musb_readb(musb->mregs, MUSB_DEVCTL);'
+    guard = '''\t/* SPRD role work owns runtime PM, including real host/peripheral
+\t * sessions. A retained DEVCTL SESSION must not add another owner.
+\t */
+\tif (musb->ops->quirks & MUSB_DMA_SPRD)
+\t\treturn;
+
+'''
+    if guard not in body:
+        assert body.count(marker) == 1, 'Unexpected MUSB session PM accounting'
+        body = body.replace(marker, guard + marker, 1)
+        text = text[:start] + body + text[end:]
     core.write_text(text)
+
+    # last_event can still contain the previous CC host notification when
+    # configfs restarts the gadget after returning to device mode. SPRD's
+    # glue owns VBUS; the generic SRP callback must not restart source mode.
+    gadget = kernel / 'drivers/usb/musb/musb_gadget.c'
+    text = gadget.read_text()
+    old = '\tif (musb->xceiv && musb->xceiv->last_event == USB_EVENT_ID)'
+    new = ('\tif (!(musb->ops->quirks & MUSB_DMA_SPRD) &&\n'
+           '\t    musb->xceiv && musb->xceiv->last_event == USB_EVENT_ID)')
+    if new not in text:
+        assert text.count(old) == 1, 'Unexpected gadget VBUS startup'
+        text = text.replace(old, new, 1)
+    gadget.write_text(text)
 
     # DRD does not run musb_start() from the root hub's POWER request:
     # musb_has_gadget() only accepts a host-only port. The vendor host_start

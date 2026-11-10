@@ -259,7 +259,7 @@ int main(void){struct value v={-1};
             subprocess.run([str(root / 'bq')], check=True)
 
 
-    def test_stopped_host_releases_core_session_pm_hold(self):
+    def test_host_session_pm_ownership_and_cleanup(self):
         import resource
         def no_core_dump():
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -306,28 +306,40 @@ static void flush_delayed_work(int *work){(void)work;if(queued){queued=0;musb_pm
 int main(void){
  struct ops ops={MUSB_DMA_SPRD};struct dev dev={0};struct hcd h={0};struct musb m={.controller=&dev,.ops=&ops,.hcd=&h};running=&m;
  for(int cycle=0;cycle<3;cycle++){
-  /* Glue owns one reference; an actual session interrupt acquires another. */
+  /* Actual SPRD role work owns one reference. Legacy core accounting
+   * used to add another; keep both teardown cases under test. */
   dev.usage++;devctl=MUSB_DEVCTL_SESSION;musb_pm_runtime_check_session(&m);
-  assert(m.session&&dev.usage==2);queued=0;h.rh_registered=true;musb_host_cleanup(&m);
+  assert(m.session==LEGACY_PM && dev.usage==1+LEGACY_PM);
+  queued=0;h.rh_registered=true;musb_host_cleanup(&m);
   assert(devctl==0);dev.usage--; /* Matching glue host-session put. */
   if(queued)musb_pm_runtime_check_session(&m); /* Existing core IRQ work. */
   assert(dev.usage==0&&!m.session); /* Parent can now suspend and change role. */
   musb_host_cleanup(&m);assert(dev.usage==0);
  }
- ops.quirks=0;queued=0;h.rh_registered=true;musb_host_cleanup(&m);assert(!queued);
+ ops.quirks=0;devctl=MUSB_DEVCTL_SESSION;musb_pm_runtime_check_session(&m);
+ assert(m.session&&dev.usage==1);devctl=0;musb_pm_runtime_check_session(&m);
+ assert(!m.session&&!dev.usage);
+ queued=0;h.rh_registered=true;musb_host_cleanup(&m);assert(!queued);
  assert(disabled==4);
 }
 '''
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             old = re.sub(r'\s*if \(musb->ops->quirks & MUSB_DMA_SPRD\) \{.*?\n\t\}', '', cleanup, flags=re.S)
-            for name, body in [('fixed', cleanup), ('old', old)]:
-                (root / (name+'.c')).write_text(prelude + check + stop + body + main)
+            guard='\tif (musb->ops->quirks & MUSB_DMA_SPRD)\n\t\treturn;\n'
+            has_owner_guard='SPRD role work owns runtime PM' in check
+            legacy=check.replace(guard,'',1) if has_owner_guard else check
+            variants=[('fixed',check,cleanup,not has_owner_guard),
+                      ('legacy-balanced',legacy,cleanup,True),
+                      ('old',legacy,old,True)]
+            for name, pm_check, body, legacy_pm in variants:
+                (root / (name+'.c')).write_text(prelude + pm_check + stop + body +
+                    '\n#define LEGACY_PM '+str(int(legacy_pm))+'\n'+main)
                 subprocess.run(['cc','-Wall','-Wextra','-Werror','-Wno-unused-variable',
                                 str(root/(name+'.c')),'-o',str(root/name)],check=True)
                 result = subprocess.run([str(root/name)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                                         preexec_fn=no_core_dump)
-                if name == 'fixed':
+                if name != 'old':
                     self.assertEqual(result.returncode, 0, result.stderr.decode())
                 else:
                     self.assertNotEqual(result.returncode, 0, 'Old teardown must reproduce the leaked session')

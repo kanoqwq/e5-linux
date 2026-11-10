@@ -76,8 +76,28 @@ window.__exited = false;
 })();
 `;
 
+// The actual shell CSS and an offset app iframe reproduce the wallpaper bug:
+// making the app transparent alone reveals the iframe's opaque background.
+const previewWallpaper = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900"><defs><linearGradient id="g" x2=".8" y2="1"><stop stop-color="#183e4c"/><stop offset=".5" stop-color="#415e6e"/><stop offset="1" stop-color="#765573"/></linearGradient></defs><path fill="url(#g)" d="M0 0h600v900H0z"/><path fill="#95c6c8" fill-opacity=".3" d="M-60 600Q200 260 650 470V900H0z"/><path fill="#abc5dd" fill-opacity=".18" d="M-20 770Q210 450 640 650V900H0z"/></svg>');
+const shellPage = `<!doctype html><html><head><meta charset="utf-8"><style>
+${fs.readFileSync(path.join(__dirname, '../base/style.css'), 'utf8')}
+${fs.readFileSync(path.join(__dirname, '../mobile.css'), 'utf8')}
+</style></head><body class="desktop-wallpaper" data-theme="dark" style="--ui-opacity:.7;--ui-scale:1">
+<div id="bar"><div class="left">中国移动 · 5G</div><div class="right">02:46 · 78%</div></div>
+<header id="mobile-toolbar"><button aria-label="Back">‹</button><h1>eSIM 管理</h1></header>
+<div id="pages"><div>HOST CONTENT MUST NOT LEAK INTO THE APP</div></div>
+<iframe id="app-frame" src="/index.html"></iframe>
+<nav id="mobile-nav" style="display:flex;align-items:center;justify-content:space-around">‹<span>○</span>▢</nav>
+<script>document.body.style.setProperty('--desktop-wallpaper',${JSON.stringify('url("'+previewWallpaper+'")')});</script>
+</body></html>`;
+
 const server = http.createServer((request, response) => {
     const pathname = new URL(request.url, 'http://localhost').pathname;
+    if (pathname === '/theme-host.html') {
+        response.writeHead(200, { 'Content-Type': types['.html'] });
+        response.end(shellPage);
+        return;
+    }
     if (pathname === '/sdk/e5.js') {
         response.writeHead(200, { 'Content-Type': types['.js'] });
         response.end(SDK);
@@ -492,6 +512,94 @@ async function noOverflow(page) {
     const base = 'http://127.0.0.1:' + server.address().port;
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true });
     try {
+        // Unknown eUICC selection is a useful, translated empty state, with
+        // slot switching and recovery actions rather than a raw lpac symbol.
+        {
+            const page = await open(browser,base,mainScenario);await waitView(page,'root');
+            for (const lang of ['zh','en','tr']) {
+                await page.evaluate(lang => {
+                    e5.lang=lang;currentSlot().chip=null;currentSlot().profiles=null;
+                    currentSlot().chipError='esim_select';render();
+                },lang);
+                const empty=page.locator('.empty-state');
+                assert.equal(await empty.getAttribute('data-state'),'unsupported');
+                assert.ok(!(await empty.textContent()).includes('esim_select'));
+                assert.equal(await empty.locator('svg').count(),1);
+                assert.equal(await empty.getByRole('button').count(),2);
+                await noOverflow(page);
+            }
+            for (const viewport of [{width:240,height:320},{width:320,height:345},{width:360,height:640}]) {
+                await page.setViewportSize(viewport);await noOverflow(page);
+                await page.locator('[data-focus="retry"]').scrollIntoViewIfNeeded();
+                assert.equal(await page.locator('[data-focus="retry"]').isVisible(),true);
+            }
+            await page.setViewportSize({width:320,height:480});
+            await page.locator('[data-focus="retry"]').click();await waitView(page,'root');
+            assert.equal(await page.locator('.empty-state').count(),0);
+            assert.deepEqual(page.errors,[]);await page.close();
+        }
+
+        // Host palette, wallpaper crop/offset, alpha, size and live changes.
+        {
+            const page=await browser.newPage({viewport:{width:320,height:480},deviceScaleFactor:1});
+            await page.addInitScript(FIXTURES);
+            await page.addInitScript(`window.__mock=(${mainScenario.toString()})();`);
+            await page.goto(base+'/theme-host.html');
+            const frame=page.frameLocator('#app-frame');
+            await frame.locator('#app[data-view="root"]').waitFor();
+            for (const theme of ['dark','light']) for (const opacity of [0,.35,.7,1]) {
+                await page.evaluate(({theme,opacity})=>{
+                    document.body.dataset.theme=theme;
+                    document.body.style.setProperty('--ui-opacity',opacity);
+                },{theme,opacity});
+                await page.waitForFunction(({theme,opacity})=>{
+                    const doc=document.querySelector('iframe').contentDocument;
+                    return doc.documentElement.dataset.theme===theme &&
+                        Math.abs(+doc.defaultView.getComputedStyle(doc.documentElement).getPropertyValue('--surface-alpha')-opacity)<.001;
+                },{theme,opacity});
+                const values=await frame.locator('html').evaluate(node=>{
+                    const css=getComputedStyle(node,'::before');
+                    return {image:css.backgroundImage,height:css.height,top:css.top,
+                        body:getComputedStyle(document.body).backgroundColor,
+                        color:getComputedStyle(node).getPropertyValue('--text').trim()};
+                });
+                assert.ok(values.image.includes('data:image/svg+xml'));
+                assert.equal(values.height,'480px');assert.equal(values.top,'-72px');
+                assert.equal(values.body,'rgba(0, 0, 0, 0)');
+                assert.equal(values.color,theme==='light'?'#17283b':'#f1f5fa');
+            }
+            await page.evaluate(()=>{
+                document.body.classList.remove('desktop-wallpaper');
+                document.body.style.setProperty('--ui-scale','1.2');
+            });
+            await frame.locator('html:not(.desktop-wallpaper)').waitFor();
+            assert.equal(await frame.locator('.card').first().evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 255, 255)');
+            assert.equal(await frame.locator('body').evaluate(n=>getComputedStyle(n).fontSize),'16.8px');
+            if (process.env.E5_ESIM_PREVIEW_DIR) {
+                const folder=path.resolve(process.env.E5_ESIM_PREVIEW_DIR);
+                fs.mkdirSync(folder,{recursive:true});
+                await page.evaluate(()=>{
+                    document.body.dataset.theme='dark';
+                    document.body.classList.add('desktop-wallpaper');
+                    document.body.style.setProperty('--ui-opacity','.7');
+                    document.body.style.setProperty('--ui-scale','1');
+                });
+                await frame.locator('html[data-theme="dark"].desktop-wallpaper').waitFor();
+                await page.locator('#app-frame').screenshot({path:path.join(folder,'esim-wallpaper-dark.png')});
+                await frame.locator('html').evaluate(()=>{
+                    currentSlot().chip=null;currentSlot().profiles=null;
+                    currentSlot().chipError='esim_select';render();
+                });
+                await page.locator('#app-frame').screenshot({path:path.join(folder,'esim-unavailable-dark.png')});
+                await page.evaluate(()=>document.body.dataset.theme='light');
+                await frame.locator('html[data-theme="light"]').waitFor();
+                await page.locator('#app-frame').screenshot({path:path.join(folder,'esim-unavailable-light.png')});
+                await frame.locator('[data-focus="retry"]').click();
+                await frame.locator('#app[data-view="root"] .tile').first().waitFor();
+                await page.locator('#app-frame').screenshot({path:path.join(folder,'esim-wallpaper-light.png')});
+            }
+            await page.close();
+        }
         // Missing firmware components never trigger a runtime package install or idle polling.
         {
             const page = await open(browser, base, idleInstallScenario);
