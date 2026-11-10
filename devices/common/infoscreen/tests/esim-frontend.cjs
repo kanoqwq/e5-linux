@@ -719,13 +719,26 @@ async function noOverflow(page) {
             for (const lang of ['zh','en','tr']) {
                 const values = await page.evaluate(language => {
                     e5.lang=language;
-                    return ['server_ca','server_tls','server_timeout','card_changed','operation_interrupted','lpac_failed','readback_failed']
+                    return ['apdu_select','server_ca','server_tls','server_timeout','card_changed','operation_interrupted','lpac_failed','readback_failed']
                         .map(error => ({error,text:failureText({error})}));
                 },lang);
                 for (const value of values) assert.notEqual(value.text,value.error);
                 const text=values.find(value=>value.error==='server_tls').text;
                 assert.ok(text.includes({zh:'证书',en:'certificate',tr:'sertifikası'}[lang]));
             }
+            await page.close();
+        }
+
+        {
+            const page = await open(browser,base,mainScenario);await waitView(page,'root');
+            const fields = await page.evaluate(() => {
+                return [null, undefined, '', '   ', [], ['   '], 0].map(value => {
+                    currentSlot().chip = { test: value };
+                    return infoField('Test', 'test').textContent;
+                });
+            });
+            for (const text of fields.slice(0,6)) assert.ok(text.includes('未提供'));
+            assert.ok(fields[6].includes('0 B'));
             await page.close();
         }
 

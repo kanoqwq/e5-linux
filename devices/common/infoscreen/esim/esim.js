@@ -101,6 +101,7 @@ const TR = {
  "Signing certificate key IDs": "İmzalama sertifikası anahtar kimlikleri",
  "Verification certificate key IDs": "Doğrulama sertifikası anahtar kimlikleri",
  "SAS accreditation": "SAS akreditasyonu",
+ "Not provided": "Sağlanmadı",
  "Back": "Geri",
  "Process all": "Tümünü işle",
  "Delete all": "Tümünü sil",
@@ -297,6 +298,7 @@ function failureText(value) {
  const failure = failureOf(value);
  const error = failure.error;
  const detail = failure.detail;
+ if (error === 'apdu_select') return t(...JOB_ERRORS.not_euicc);
  if (JOB_ERRORS[error]) return t(...JOB_ERRORS[error]);
  if (error === 'euicc_init')
   return t('无法访问 eSIM', 'Cannot reach the eSIM');
@@ -393,10 +395,14 @@ function message(text) {
  return h('p', { class: 'muted', text });
 }
 
+function fieldText(value) {
+ return value == null || !String(value).trim() || value === '--' ? t('未提供', 'Not provided') : String(value);
+}
+
 function kv(label, value, mono) {
  return h('div', { class: 'kv' }, [
   h('div', { class: 'k', text: label }),
-  h('div', { class: 'v' + (mono ? ' mono' : '') }, value instanceof Node ? value : String(value == null || value === '' ? '--' : value))
+  h('div', { class: 'v' + (mono ? ' mono' : '') }, value instanceof Node ? value : fieldText(value))
  ]);
 }
 
@@ -874,7 +880,9 @@ function warnJob(job) {
   return;
  if (job.profile_state_pending)
   e5.toast(t('配置状态尚未更新，请稍后重试', 'Profile state has not updated; try again later'));
- if (job.warning === 'refresh')
+ if (job.warning === 'readback_failed' || job.warning === 'chip_info')
+  e5.toast(t('操作已提交，但回读未确认，请重新读取卡片，不要重复执行', 'Operation submitted but readback was not confirmed. Read the card; do not repeat the operation'));
+ else if (job.warning === 'refresh')
   e5.toast(t('SIM 刷新失败', 'SIM refresh failed'));
  else if (job.warning === 'notification_list')
   e5.toast(t('操作已完成，读取通知失败，可在通知页重试', 'Operation completed; open Notifications to retry reporting'));
@@ -1395,12 +1403,12 @@ function infoField(label, path, mono) {
  const value = jget(chip, path);
  if (Array.isArray(value)) {
   return kv(label, value.length
-   ? h('span', {}, value.map((item) => h('span', { class: 'line', text: String(item) })))
+   ? h('span', {}, value.map((item) => h('span', { class: 'line', text: fieldText(item) })))
    : '--', mono);
  }
  if (typeof value === 'number')
   return kv(label, bytes(value), mono);
- return kv(label, value == null || value === '' ? '--' : String(value), mono);
+ return kv(label, value, mono);
 }
 
 function infoNodes() {
