@@ -4,11 +4,24 @@
 'require ui';
 'require mu300.common as M';
 
-var start = rpc.declare({object:'unisoc-euicc',method:'start',params:['job','slot','action','transport','eid','iccid','nickname','activation','confirmation','confirm','aid','scan_se'],nobatch:true,expect:{'':{}}});
+var start = rpc.declare({object:'unisoc-euicc',method:'start',params:['job','slot','action','transport','eid','iccid','nickname','activation','confirmation','confirm','aid','scan_se','sequences','remove'],nobatch:true,expect:{'':{}}});
 var status = rpc.declare({object:'unisoc-euicc',method:'status',params:['job'],nobatch:true,expect:{'':{}}});
 var answer = rpc.declare({object:'unisoc-euicc',method:'answer',params:['job','accept'],nobatch:true,expect:{'':{}}});
 var cancel = rpc.declare({object:'unisoc-euicc',method:'cancel',params:['job'],nobatch:true,expect:{'':{}}});
 var words = {
+ '操作完成，部分信息未更新，请重新读取卡片':['Operation completed; some information could not be refreshed. Read the card again','İşlem tamamlandı; bazı bilgiler yenilenemedi. Kartı yeniden okuyun'],
+ '读取配置失败，请重新读取卡片':['Cannot read profiles; read the card again','Profiller okunamadı; kartı yeniden okuyun'],
+ '读取通知失败，请重新读取卡片':['Cannot read notifications; read the card again','Bildirimler okunamadı; kartı yeniden okuyun'],
+ '详情':['Details','Ayrıntılar'],
+ '卡片详情':['Card details','Kart ayrıntıları'],
+ '未提供':['Not provided','Sağlanmadı'],
+ 'SGP.22 版本':['SGP.22 version','SGP.22 sürümü'],
+ '配置格式版本':['Profile format version','Profil biçimi sürümü'],
+ 'GlobalPlatform 版本':['GlobalPlatform version','GlobalPlatform sürümü'],
+ '剩余运行内存':['Free RAM','Boş RAM'],
+ '签名证书公钥标识':['Signing certificate key IDs','İmzalama sertifikası anahtar kimlikleri'],
+ '验证证书公钥标识':['Verification certificate key IDs','Doğrulama sertifikası anahtar kimlikleri'],
+ 'SAS 认证编号':['SAS accreditation','SAS akreditasyonu'],
  'eSIM 管理':['eSIM management','eSIM yönetimi'],
  '管理插在设备卡槽中的实体 eUICC。普通 SIM 卡不能通过此页面变成 eSIM。':['Manage a removable eUICC in a device SIM slot. A regular SIM cannot be converted into an eSIM here.','Cihazın SIM yuvasındaki çıkarılabilir eUICC kartını yönetin. Normal bir SIM burada eSIM’e dönüştürülemez.'],
  '管理卡槽':['SIM to manage','Yönetilecek SIM'],
@@ -76,8 +89,13 @@ var words = {
 };
 Object.assign(words,{
  '安全元件':['Secure element','Güvenli öğe'],
+ '发送':['Send','Gönder'],
+ '删除待发送通知？':['Delete this pending notification?','Bu bekleyen bildirim silinsin mi?'],
+ '部分通知未发送':['Some notifications were not sent','Bazı bildirimler gönderilemedi'],
  '默认':['Default','Varsayılan'],
  '安装预览':['Installation preview','Yükleme önizlemesi'],
+ '安装配置':['Install profile','Profili yükle'],
+ '配置类型':['Profile class','Profil sınıfı'],
  '运营商':['Provider','Sağlayıcı'],
  '配置名称':['Profile name','Profil adı'],
  '确认安装此配置？':['Install this profile?','Bu profil yüklensin mi?'],
@@ -152,6 +170,8 @@ Object.assign(words,{
  ]
 });
 function t(s){var lang=M.uiLanguage();return lang==='zh'?s:(words[s]||[s,s])[lang==='tr'?1:0];}
+function failure(reply){var error=Error(reply.submitted?'readback_failed':reply.error);error.detail=reply.error_detail;return error;}
+function errorMessage(error){var parts=[t(errorText[error.message]||'操作失败，请重新读取卡片确认状态')],detail=error.detail;if(detail){if(detail.message)parts.push(detail.message);if(detail.data!=null)parts.push(typeof detail.data==='string'?detail.data:JSON.stringify(detail.data));}else if(!errorText[error.message])parts.push(error.message);return parts.join(' · ');}
 function el(tag,text,cls){var n=document.createElement(tag);if(text!=null)n.textContent=t(text);if(cls)n.className=cls;return n;}
 function button(text,click,cls){var b=el('button',text,'mud-btn '+(cls||''));b.type='button';b.onclick=click;return b;}
 var errorText={no_sim:'未插卡',not_euicc:'当前卡不是 eUICC，或无法选择其管理应用',apdu_select:'当前卡不是 eUICC，或无法选择其管理应用',modem_unavailable:'模组暂不可用',modem_busy:'模组正忙，请稍后重试',at_rejected:'模组拒绝了 APDU 请求，请核对接口设置',at_timeout:'AT 请求超时，请重新读取确认卡片状态',card_changed:'卡槽已改变，请重新读取',operation_busy:'已有 eUICC 操作正在执行',operation_interrupted:'操作中断，请重新读取卡片确认结果，不要直接重复下载或删除',operation_timeout:'操作超时，请重新读取卡片确认结果',profile_enabled:'请先停用此配置再删除',profile_missing:'配置已不存在，请重新读取',lpac_missing:'系统未安装 lpac，请更新完整固件',activation_invalid:'激活码格式无效'};
@@ -168,8 +188,11 @@ var CSS=`
 .mud-euicc .eu-top select{width:100%;max-width:none;min-width:0;min-height:40px;margin:0;font-size:.84rem}
 .mud-euicc .eu-read{flex:none;min-height:40px;margin-left:auto;gap:8px;padding:8px 14px;font-weight:600;background:color-mix(in srgb,var(--brand,var(--primary,#168e86)) 14%,var(--surface,var(--background,#fff)));border-color:color-mix(in srgb,var(--brand,var(--primary,#168e86)) 45%,var(--hairline,var(--border,#ccc)))}
 .mud-euicc .eu-read svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.mud-euicc .eu-summary{display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px}.mud-euicc .eu-value{display:block;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;margin-top:5px}.mud-euicc .eu-body{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px}.mud-euicc .eu-panel{padding:20px;min-width:0;margin:0}.mud-euicc h3{padding:0;border:0}.mud-euicc .eu-form{display:grid;gap:12px}.mud-euicc label.eu-field{display:grid;gap:6px}.mud-euicc input,.mud-euicc select,.eu-confirm input{box-sizing:border-box;min-width:0;width:100%;color:var(--text,#222);background:var(--surface,var(--background,#fff));border:1px solid var(--hairline,var(--border,#ccc));border-radius:8px;padding:9px 12px;font:inherit}.mud-euicc .eu-state{display:flex;gap:10px;align-items:center;min-height:20px;margin:0}.mud-euicc .eu-state[hidden]{display:none}.eu-confirm{display:grid;gap:12px;overflow-wrap:anywhere}.eu-confirm dl{margin:0}.eu-confirm dd{margin:0 0 8px;font-variant-numeric:tabular-nums}.eu-modal{position:fixed;inset:0;z-index:20000;background:color-mix(in srgb,var(--background,#000) 80%,transparent);display:flex;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px)}.eu-modal>div{max-width:440px;padding:24px;border:1px solid var(--hairline,var(--border,#bbb));border-radius:16px;background:var(--surface,var(--background,#fff));color:var(--text,#222);text-align:center}.eu-modal.mud{max-width:none;margin:0}.eu-modal .mud-spin{display:block;width:30px;height:30px;margin:0 auto 16px;border:3px solid var(--hairline,var(--border,#ccc));border-top-color:var(--brand,var(--primary,#168e86));border-radius:50%;animation:euiccspin .8s linear infinite}@keyframes euiccspin{to{transform:rotate(360deg)}}.mud-euicc .eu-empty{padding:24px;text-align:center}.mud-euicc .mud-note{line-height:1.6;overflow-wrap:anywhere}
+.mud-euicc .eu-summary{display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px}.mud-euicc .eu-value{display:block;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;margin-top:5px}.mud-euicc .eu-body{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:stretch;gap:16px}.mud-euicc .eu-panel{padding:20px;min-width:0;margin:0}.mud-euicc h3{padding:0;border:0}.mud-euicc .eu-form{display:grid;gap:12px}.mud-euicc label.eu-field{display:grid;gap:6px}.mud-euicc input,.mud-euicc select,.eu-confirm input{box-sizing:border-box;min-width:0;width:100%;color:var(--text,#222);background:var(--surface,var(--background,#fff));border:1px solid var(--hairline,var(--border,#ccc));border-radius:8px;padding:9px 12px;font:inherit}.mud-euicc .eu-state{display:flex;gap:10px;align-items:center;min-height:20px;margin:0}.mud-euicc .eu-state[hidden]{display:none}.eu-confirm{display:grid;gap:12px;overflow-wrap:anywhere}.eu-confirm dl{margin:0}.eu-confirm dd{margin:0 0 8px;font-variant-numeric:tabular-nums}.eu-preview{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px}.eu-preview dt{color:var(--text-muted,var(--text-light,#888))}.eu-preview dd{margin:0;overflow-wrap:anywhere}.eu-modal progress{display:block;appearance:none;width:100%;height:8px;margin:16px 0;border:0;border-radius:8px;overflow:hidden;background:var(--hairline,var(--border,#ddd));accent-color:var(--brand,var(--primary,#168e86))}.eu-modal progress::-webkit-progress-bar{background:var(--hairline,var(--border,#ddd))}.eu-modal progress::-webkit-progress-value{background:var(--brand,var(--primary,#168e86))}.eu-modal progress::-moz-progress-bar{background:var(--brand,var(--primary,#168e86))}.eu-modal{position:fixed;inset:0;z-index:20000;background:color-mix(in srgb,var(--background,#000) 80%,transparent);display:flex;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px)}.eu-modal>div{max-width:440px;padding:24px;border:1px solid var(--hairline,var(--border,#bbb));border-radius:16px;background:var(--surface,var(--background,#fff));color:var(--text,#222);text-align:center}.eu-modal.mud{max-width:none;margin:0}.eu-modal .mud-spin{display:block;width:30px;height:30px;margin:0 auto 16px;border:3px solid var(--hairline,var(--border,#ccc));border-top-color:var(--brand,var(--primary,#168e86));border-radius:50%;animation:euiccspin .8s linear infinite}@keyframes euiccspin{to{transform:rotate(360deg)}}.mud-euicc .eu-empty{padding:24px;text-align:center}.mud-euicc .mud-note{line-height:1.6;overflow-wrap:anywhere}
 
+.mud-euicc .eu-info-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.mud-euicc .eu-info-heading h3{margin:0}.mud-euicc .eu-info-heading button{padding:4px 10px;font-size:.8rem}.mud-euicc .eu-advanced>summary{cursor:pointer}.mud-euicc .eu-advanced[open]>summary{margin-bottom:16px}.mud-euicc .eu-advanced>.eu-field{display:grid;gap:8px}.mud-euicc .eu-advanced>.mud-note{margin:12px 0 0}
+.mud-euicc .eu-notes{display:flex;flex-direction:column;contain:size;min-height:0;overflow:auto}.mud-euicc .eu-notes> *{flex-shrink:0}.mud-euicc .eu-notes>.eu-notifications{flex:1 1 0;min-height:0;max-height:none}
+.mud-euicc .eu-notifications{list-style:none;padding:0;margin:12px 0 0;max-height:360px;overflow-y:auto;overscroll-behavior:contain}.mud-euicc .eu-notifications li{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--hairline,var(--border,#ddd))}.mud-euicc .eu-notification-info{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere;font-size:.78rem}.mud-euicc .eu-notifications .eu-actions{flex-shrink:0}
 .mud-euicc .eu-profile-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
 .mud-euicc .eu-search{flex:1;min-width:140px;max-width:360px;font-size:.8rem;padding:8px 10px;margin:0}
 .mud-euicc .eu-filter{width:auto;max-width:100%;font-size:.8rem;padding:8px 10px;margin:0}
@@ -186,7 +209,7 @@ var CSS=`
 .mud-euicc .eu-page-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mud-euicc .eu-page-size{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;margin:0}
 .mud-euicc .eu-page-size select{width:auto;padding:5px 8px;font-size:.75rem;margin:0}.mud-euicc .eu-pagination .mud-btn{padding:5px 10px;min-height:30px;font-size:.75rem}
 @media(max-width:700px){.mud-euicc .eu-profile-table,.mud-euicc .eu-profile-table tbody{display:block}.mud-euicc .eu-profile-table thead{display:none}.mud-euicc .eu-profile-table tr{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:3px 8px;padding:10px 0;border-bottom:1px solid var(--hairline,var(--border,#ddd))}.mud-euicc .eu-profile-table td{display:block;min-width:0;padding:0;border:0}.mud-euicc .eu-profile-table .eu-profile-name{grid-column:1;grid-row:1}.mud-euicc .eu-profile-table .eu-provider{grid-column:1 / 3;grid-row:2;font-size:.7rem;color:var(--text-muted,var(--text-light,#888))}.mud-euicc .eu-profile-table .eu-iccid{grid-column:1 / 3;grid-row:3}.mud-euicc .eu-profile-table .eu-status{grid-column:2;grid-row:1;align-self:center}.mud-euicc .eu-profile-table .eu-row-actions{grid-column:3;grid-row:1 / 4;align-self:center}.mud-euicc .eu-search{max-width:none}.mud-euicc .eu-pagination{gap:10px}.mud-euicc .eu-page-controls{width:100%;justify-content:flex-end}}
-@media(max-width:700px){.mud-euicc .eu-body,.mud-euicc .eu-summary{grid-template-columns:1fr}.mud-euicc .eu-panel{padding:16px}.mud-euicc .eu-top{flex-direction:column;align-items:stretch;gap:12px}.mud-euicc .eu-top-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;width:100%}.mud-euicc .eu-top label{width:100%;flex:auto}.mud-euicc .eu-read{align-self:flex-end;min-width:140px}.mud-euicc .eu-actions .mud-btn{flex:1}.eu-modal{padding:16px}}
+@media(max-width:700px){.mud-euicc .eu-notes{contain:none;overflow:visible}.mud-euicc .eu-notes>.eu-notifications{flex:none;max-height:360px}.mud-euicc .eu-body,.mud-euicc .eu-summary{grid-template-columns:1fr}.mud-euicc .eu-panel{padding:16px}.mud-euicc .eu-top{flex-direction:column;align-items:stretch;gap:12px}.mud-euicc .eu-top-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;width:100%}.mud-euicc .eu-top label{width:100%;flex:auto}.mud-euicc .eu-read{align-self:flex-end;min-width:140px}.mud-euicc .eu-actions .mud-btn{flex:1}.eu-modal{padding:16px}}
 `;
 
 return view.extend({
@@ -210,22 +233,48 @@ return view.extend({
   [['激活码',self.activation],['确认码（可选）',self.confirmation]].forEach(function(pair){var l=el('label',pair[0],'eu-field');l.append(pair[1]);self.download.append(l);});
   var actions=el('div',null,'eu-actions'),qr=el('input');qr.type='file';qr.accept='image/*';qr.hidden=true;qr.onchange=function(){self.readQR(qr.files[0]);qr.value='';};
   actions.append(button('读取二维码图片',function(){qr.click();}),button('下载配置',function(){self.ask('download',null,{activation:self.activation.value,confirmation:self.confirmation.value});},'primary'),qr);self.download.append(actions);
-  self.notes=el('section',null,'mud-card eu-panel');body.append(self.download,self.notes);self.root.append(body);
-  var advanced=el('details',null,'mud-card eu-panel');advanced.append(el('summary','接口设置（高级）'));var a=el('label','APDU 接口','eu-field');self.transport=el('select');[['csim','AT+CSIM'],['logical','AT+CCHO / CGLA']].forEach(function(v){var o=el('option',v[1]);o.value=v[0];self.transport.append(o);});a.append(self.transport);advanced.append(a,el('p','仅在模组不支持默认接口时更改。更改后需重新读取卡片。','mud-note'));self.root.append(advanced);
+  self.notes=el('section',null,'mud-card eu-panel eu-notes');body.append(self.download,self.notes);self.root.append(body);
+  var advanced=el('details',null,'mud-card eu-panel eu-advanced');advanced.append(el('summary','接口设置（高级）'));var a=el('label','APDU 接口','eu-field');self.transport=el('select');[['csim','AT+CSIM'],['logical','AT+CCHO / CGLA']].forEach(function(v){var o=el('option',v[1]);o.value=v[0];self.transport.append(o);});a.append(self.transport);advanced.append(a,el('p','仅在模组不支持默认接口时更改。更改后需重新读取卡片。','mud-note'));self.root.append(advanced);
   self.slot.onchange=self.transport.onchange=function(){self.profilePage=0;self.profileQuery='';self.profileFilter='';self.data=null;self.aid='';self.seMask=0;self.paint();self.state.textContent=t('尚未读取');};
   self.paint();
   var saved;try{saved=JSON.parse(sessionStorage.getItem('unisoc-euicc-job')||'null');}catch(e){}
   // Resume observation only: never repeat a download/delete on reload.
-  if(saved&&/^[0-9a-f]{32}$/.test(saved.job)&&['0','1'].includes(saved.slot)){self.slot.value=saved.slot;self.transport.value=saved.transport||'csim';self.job=saved.job;self.action=saved.action;self.timer=setTimeout(function(){if(self.root.isConnected)self.watch();},0);}
+  if(saved&&/^[0-9a-f]{32}$/.test(saved.job)&&['0','1'].includes(saved.slot)){self.slot.value=saved.slot;self.transport.value=saved.transport||'csim';self.aid=saved.aid||'';self.seMask=saved.ses||0;self.paint();self.job=saved.job;self.action=saved.action;self.timer=setTimeout(function(){if(self.root.isConnected)self.watch();},0);}
   return self.root;
  },
  paint:function(){
-  var self=this,data=self.data;if(data){self.aid=data.aid||self.aid||'';self.seMask=data.ses||self.seMask||0;}self.se.replaceChildren();[['',t('默认')],['A06573746B6D65FFFF4953442D522030','SE 0'],['A06573746B6D65FFFF4953442D522031','SE 1']].forEach(function(v,i){if(i&&!(self.seMask&(1<<(i-1))))return;var o=el('option',v[1]);o.value=v[0];self.se.append(o);});self.se.value=self.aid;self.seLabel.hidden=!self.seMask;self.info.replaceChildren(el('h3','卡片信息'));self.profiles.replaceChildren(el('h3','配置列表'));self.notes.replaceChildren(el('h3','通知管理'));
-  if(data){var summary=el('div',null,'eu-summary');[['EID',data.eid],['卡片固件',data.firmware||'—'],['可用空间',typeof data.free_bytes==='number'?data.free_bytes.toLocaleString()+' B':'—']].forEach(function(p){var c=el('div',p[0],'mud-note');c.append(el('strong',p[1],'eu-value'));summary.append(c);});self.info.append(summary);
+  var self=this,data=self.data;if(data){self.aid=data.aid==null?self.aid:data.aid;if(data.ses!=null)self.seMask=data.ses;}self.se.replaceChildren();[['',t('默认')],['A06573746B6D65FFFF4953442D522030','SE 0'],['A06573746B6D65FFFF4953442D522031','SE 1']].forEach(function(v,i){if(i?!(self.seMask&(1<<(i-1))):self.seMask)return;var o=el('option',v[1]);o.value=v[0];self.se.append(o);});self.se.value=self.aid;self.seLabel.hidden=!self.seMask;self.info.replaceChildren(el('h3','卡片信息'));self.profiles.replaceChildren(el('h3','配置列表'));self.notes.replaceChildren(el('h3','通知管理'));
+  if(data){var head=el('div',null,'eu-info-heading');head.append(el('h3','卡片信息'),button('详情',function(){self.showDetails();}));self.info.replaceChildren(head);var summary=el('div',null,'eu-summary');[['EID',data.eid],['卡片固件',data.firmware||'—'],['可用空间',data.free_bytes==null?t('未提供'):M.fmtBytes(data.free_bytes)]].forEach(function(p){var c=el('div',p[0],'mud-note');c.append(el('strong',p[1],'eu-value'));summary.append(c);});self.info.append(summary);
    self.paintProfiles();
-   var count=Array.isArray(data.notifications)?data.notifications.length:0;self.notes.append(el('p',t('待发送通知')+' · '+count,'eu-value'),el('p','配置变更会在卡中生成运营商通知。发送成功后会清除对应的待处理通知。','mud-note'));var n=button('发送待处理通知',function(){self.run('notifications');});n.disabled=!count;self.notes.append(n);
+   self.paintNotifications();
   }else{self.info.append(el('p','尚未读取','mud-note'));self.profiles.append(el('p','尚未读取','mud-note'));self.notes.append(el('p','尚未读取','mud-note'));}
   self.controls();
+ },
+ showDetails:function(){
+  var data=this.data,chip=data.chip||{},info=chip.EUICCInfo2||{},space=info.extCardResource||{},fields=el('dl',null,'eu-preview');fields.style.maxHeight='60vh';fields.style.overflowY='auto';
+  function text(value){if(Array.isArray(value))return value.map(text).join('\n')||t('未提供');return value==null||!String(value).trim()?t('未提供'):String(value);}
+  [['EID',data.eid],['卡片固件',data.firmware],['SGP.22 版本',info.svn],['配置格式版本',info.profileVersion],['GlobalPlatform 版本',info.globalplatformVersion],['可用空间',space.freeNonVolatileMemory==null?null:M.fmtBytes(space.freeNonVolatileMemory)],['剩余运行内存',space.freeVolatileMemory==null?null:M.fmtBytes(space.freeVolatileMemory)],['签名证书公钥标识',info.euiccCiPKIdListForSigning],['验证证书公钥标识',info.euiccCiPKIdListForVerification],['SAS 认证编号',info.sasAcreditationNumber]].forEach(function(pair){var value=el('dd',text(pair[1]));value.style.whiteSpace='pre-wrap';fields.append(el('dt',pair[0]),value);});
+  var box=el('div',null,'eu-confirm');box.append(fields);M.alertBox(t('卡片详情'),null,{content:box});
+ },
+ paintNotifications:function(){
+  var self=this,data=self.data,notifications=data.notifications||[];
+  if(data.notifications==null){self.notes.append(el('p','读取通知失败，请重新读取卡片','mud-note'));return;}
+  self.notes.append(el('p',t('待发送通知')+' · '+notifications.length,'eu-value'),el('p','配置变更会在卡中生成运营商通知。发送成功后会清除对应的待处理通知。','mud-note'));
+  var all=button('发送待处理通知',function(){self.run('notifications');});all.disabled=!notifications.length;self.notes.append(all);
+  var list=el('ul',null,'eu-notifications'),operations={install:'下载配置',enable:'启用',disable:'停用',delete:'删除'};
+  notifications.forEach(function(item){
+   var row=el('li'),info=el('div',null,'eu-notification-info'),actions=el('div',null,'eu-actions');
+   info.append(el('strong',item.seqNumber+' · '+t(operations[item.profileManagementOperation]||item.profileManagementOperation)),el('span','ICCID · '+(item.iccid||'—'),'mud-note'),el('span',item.notificationAddress||'—','mud-note'));
+   actions.append(button('发送',function(){self.run('notifications',{sequences:[item.seqNumber]});}),button('删除',function(){self.removeNotification(item);}));row.append(info,actions);list.append(row);
+  });self.notes.append(list);
+  if(data.warning)self.notes.append(el('p',data.warning==='notification_report'?errorMessage({message:data.warning,detail:data.warning_detail}):t('操作完成，部分信息未更新，请重新读取卡片'),'mud-note'));
+  (data.notification_errors||[]).forEach(function(error){self.notes.append(el('p',error.sequence+' · '+errorMessage(failure(error)),'mud-note'));});
+ },
+ removeNotification:async function(item){
+  var self=this,slot=self.slot.value,aid=self.aid,eid=self.data.eid,transport=self.transport.value;
+  if(!await M.confirmBox(t('删除待发送通知？'),item.seqNumber+' · '+(item.iccid||'—'))||!self.root.isConnected)return;
+  if(self.slot.value!==slot||!self.data||self.data.eid!==eid||self.aid!==aid||self.transport.value!==transport){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}
+  self.run('notifications',{sequences:[item.seqNumber],remove:true,confirm:'yes'});
  },
  paintProfiles:function(){
   var self=this,tools=el('div',null,'eu-profile-tools'),search=el('input',null,'eu-search'),filter=el('select',null,'eu-filter');
@@ -249,7 +298,7 @@ return view.extend({
    var action=el('td',null,'eu-row-actions'),manage=button('管理',function(){self.manage(p);},'eu-manage');manage.setAttribute('aria-label',t('管理')+' · '+name);action.append(manage);
    row.append(title,provider,el('td',p.iccid,'eu-iccid'),el('td',enabled?'已启用':'未启用','eu-status'),action);self.profileRows.append(row);
   });
-  if(!found.length){var empty=el('td',all.length?'没有匹配的配置':'此卡还没有配置','eu-empty mud-note');empty.colSpan=5;var row=el('tr');row.append(empty);self.profileRows.append(row);}
+  if(!found.length){var empty=el('td',self.data.profiles==null?'读取配置失败，请重新读取卡片':all.length?'没有匹配的配置':'此卡还没有配置','eu-empty mud-note');empty.colSpan=5;var row=el('tr');row.append(empty);self.profileRows.append(row);}
   var count=el('span',t('共 %s 个配置').replace('%s',all.length),'eu-profile-count');if(found.length!==all.length)count.append(document.createTextNode(' · '+t('匹配 %s 个').replace('%s',found.length)));
   var controls=el('div',null,'eu-page-controls'),label=el('label','每页','eu-page-size'),size=el('select');size.setAttribute('aria-label',t('每页'));
   [10,20,50].forEach(function(n){var option=el('option',String(n));option.value=String(n);size.append(option);});size.value=String(self.profilePageSize);label.append(size);
@@ -260,12 +309,12 @@ return view.extend({
   self.profileFooter.replaceChildren(count,controls);self.controls();
  },
  manage:async function(p){
-  var self=this;if(self.busy||!self.data)return;var slot=self.slot.value,eid=self.data.eid,enabled=p.profileState.toLowerCase()==='enabled';
+  var self=this;if(self.busy||!self.data)return;var slot=self.slot.value,eid=self.data.eid,aid=self.aid,transport=self.transport.value,enabled=p.profileState.toLowerCase()==='enabled';
   var choices=[{label:t(enabled?'停用':'启用'),value:enabled?'disable':'enable'},{label:t('重命名'),value:'nickname'}];
   if(!enabled)choices.push({label:t('删除'),value:'delete',danger:true});choices.push({label:t('关闭'),value:null});
   var action=await M.choiceBox(p.profileNickname||p.profileName||p.iccid,(p.serviceProviderName||'—')+'\nICCID · '+p.iccid+'\n'+t(enabled?'已启用':'未启用'),choices);
   if(!action||self.disposed||!self.root.isConnected)return;
-  if(self.slot.value!==slot||!self.data||self.data.eid!==eid||!self.data.profiles.some(function(current){return current.iccid===p.iccid;})){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}
+  if(self.slot.value!==slot||!self.data||self.data.eid!==eid||self.aid!==aid||self.transport.value!==transport||!self.data.profiles.some(function(current){return current.iccid===p.iccid;})){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}
   if(action==='nickname')self.rename(p);else self.ask(action,p);
  },
  controls:function(){
@@ -278,34 +327,43 @@ return view.extend({
   if(!writable)self.root.querySelectorAll('button').forEach(function(n){n.disabled=true;});
  },
  ask:async function(action,p,extra){
-  var self=this;if(self.busy||!self.data)return;var captured={slot:self.slot.value,eid:self.data.eid},box=el('div',null,'eu-confirm'),dl=el('dl');
-  [[t('管理卡槽'),self.slot.selectedOptions[0].textContent],['EID',captured.eid],['ICCID',p?p.iccid:'—']].forEach(function(v){dl.append(el('dt',v[0]),el('dd',v[1]));});box.append(dl,el('p','此操作会改变卡内配置，可能中断该卡的蜂窝连接。请确认当前卡槽、EID 和 ICCID。'));if(action==='delete')box.append(el('p','删除后不能从本机恢复；部分运营商的激活码仅能使用一次。'));
+  var self=this;if(self.busy||!self.data)return;var captured={slot:self.slot.value,eid:self.data.eid,aid:self.aid,transport:self.transport.value},box=el('div',null,'eu-confirm'),dl=el('dl');
+  [[t('管理卡槽'),self.slot.selectedOptions[0].textContent],[t('安全元件'),self.seMask?self.se.selectedOptions[0].textContent:t('默认')],['EID',captured.eid],['ICCID',p?p.iccid:'—']].forEach(function(v){dl.append(el('dt',v[0]),el('dd',v[1]));});box.append(dl,el('p','此操作会改变卡内配置，可能中断该卡的蜂窝连接。请确认当前卡槽、EID 和 ICCID。'));if(action==='delete')box.append(el('p','删除后不能从本机恢复；部分运营商的激活码仅能使用一次。'));
   var input=el('input');input.autocomplete='off';input.placeholder=t('输入小写 yes 后继续');box.append(input);
   var title={enable:'启用',disable:'停用',delete:'删除',download:'下载配置'}[action];
   if(!await M.confirmBox(t(title),null,{content:box,okText:t('继续')})||!self.root.isConnected)return;
   if(input.value!=='yes'){M.toast(t('输入小写 yes 后继续'),{type:'error'});return;}
-  if(self.slot.value!==captured.slot||!self.data||self.data.eid!==captured.eid){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}
+  if(self.slot.value!==captured.slot||!self.data||self.data.eid!==captured.eid||self.aid!==captured.aid||self.transport.value!==captured.transport){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}
   self.run(action,Object.assign({iccid:p?p.iccid:'',confirm:'yes'},extra||{}));
  },
- rename:async function(p){var self=this;if(self.busy)return;var slot=self.slot.value,eid=self.data.eid,input=el('input');input.maxLength=64;input.value=p.profileNickname;var field=el('label','配置昵称','eu-confirm');field.append(input);if(await M.confirmBox(t('重命名'),null,{content:field,okText:t('保存')})&&self.root.isConnected){if(self.slot.value!==slot||!self.data||self.data.eid!==eid){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}self.run('nickname',{iccid:p.iccid,nickname:input.value});}},
- overlay:function(on){var self=this;if(self.mask){self.mask.remove();self.mask=null;}if(!on)return;self.mask=el('div',null,'eu-modal mud');self.mask.setAttribute('role','status');self.mask.setAttribute('aria-live','polite');var card=el('div');self.progress=el('p','正在准备…');card.append(el('div',null,'mud-spin'),self.progress,el('p','正在操作此卡，请勿拔卡、切换卡源或关闭设备。','mud-note'));if(self.action==='download'){var stop=button('取消',async function(){stop.disabled=true;try{var reply=await cancel(self.job);if(!reply.ok)throw Error(reply.error);}catch(e){stop.disabled=false;M.toast(t(errorText[e.message]||'操作失败，请重新读取卡片确认状态'),{type:'error'});}});card.append(stop);}self.mask.append(card);document.body.append(self.mask);},
+ rename:async function(p){var self=this;if(self.busy)return;var slot=self.slot.value,eid=self.data.eid,aid=self.aid,transport=self.transport.value,input=el('input');input.maxLength=64;input.value=p.profileNickname;var field=el('label','配置昵称','eu-confirm');field.append(input);if(await M.confirmBox(t('重命名'),null,{content:field,okText:t('保存')})&&self.root.isConnected){if(self.slot.value!==slot||!self.data||self.data.eid!==eid||self.aid!==aid||self.transport.value!==transport){M.toast(t('卡槽已改变，请重新读取'),{type:'error'});return;}self.run('nickname',{iccid:p.iccid,nickname:input.value});}},
+ overlay:function(on){var self=this;if(self.mask){self.mask.remove();self.mask=null;}if(!on)return;self.mask=el('div',null,'eu-modal mud');self.mask.setAttribute('role','status');self.mask.setAttribute('aria-live','polite');var card=el('div');self.progress=el('p','正在准备…');card.append(el('div',null,'mud-spin'),self.progress,el('p','正在操作此卡，请勿拔卡、切换卡源或关闭设备。','mud-note'));if(self.action==='download'){var stop=button('取消',async function(){stop.disabled=true;try{var reply=await cancel(self.job);if(!reply.ok)throw failure(reply);}catch(e){stop.disabled=false;M.toast(errorMessage(e),{type:'error'});}});card.append(stop);}if(self.action==='download'){self.writeBar=el('progress');self.writeBar.max=100;self.writeBar.setAttribute('aria-label',t('正在安装配置…'));card.insertBefore(self.writeBar,self.progress);}self.mask.append(card);document.body.append(self.mask);},
  stage:function(s){if(s==='reading_profiles')return '正在读取配置…';if(/es9p|es11/.test(s))return '正在连接运营商服务器…';if(/load_bound|store_data/.test(s))return '正在安装配置…';return '正在与 eUICC 交互…';},
  run:async function(action,extra){
   var self=this;if(self.busy)return;self.busy=true;self.action=action;self.controls();self.overlay(true);self.state.replaceChildren(el('i',null,'mud-spin'),el('span','正在准备…'));
-  try{var v=Object.assign({slot:self.slot.value,action:action,transport:self.transport.value,eid:self.data?self.data.eid:'',aid:self.aid||'',scan_se:action==='scan'&&!self.seMask},extra||{});self.job=Array.from(crypto.getRandomValues(new Uint8Array(16)),function(b){return b.toString(16).padStart(2,'0');}).join('');sessionStorage.setItem('unisoc-euicc-job',JSON.stringify({job:self.job,slot:v.slot,transport:v.transport,action:action}));var r=await start(self.job,v.slot,v.action,v.transport,v.eid,v.iccid||'',v.nickname||'',v.activation||'',v.confirmation||'',v.confirm||'',v.aid||'',!!v.scan_se);if(!r.ok){self.job=null;sessionStorage.removeItem('unisoc-euicc-job');throw Error(r.error);}await self.watch();}
+  try{var v=Object.assign({slot:self.slot.value,action:action,transport:self.transport.value,eid:self.data?self.data.eid:'',aid:self.aid||'',scan_se:action==='scan'&&!self.seMask},extra||{});self.job=Array.from(crypto.getRandomValues(new Uint8Array(16)),function(b){return b.toString(16).padStart(2,'0');}).join('');sessionStorage.setItem('unisoc-euicc-job',JSON.stringify({job:self.job,slot:v.slot,transport:v.transport,aid:v.aid,ses:self.seMask,action:action}));var r=await start(self.job,v.slot,v.action,v.transport,v.eid,v.iccid||'',v.nickname||'',v.activation||'',v.confirmation||'',v.confirm||'',v.aid||'',!!v.scan_se,v.sequences,v.remove||false);if(!r.ok){self.job=null;sessionStorage.removeItem('unisoc-euicc-job');throw failure(r);}await self.watch();}
   catch(e){self.fail(e);}
   finally{self.activation.value='';self.confirmation.value='';}
  },
  watch:async function(){
   var self=this;if(self.disposed)return;if(!self.root.isConnected){self.unload();return;}self.busy=true;self.controls();if(!self.mask)self.overlay(true);
-  try{var r=await status(self.job);if(self.disposed)return;if(!r.ok)throw Error(r.error);self.action=r.action;if(r.slot!==self.slot.value)throw Error('card_changed');
+  try{var r=await status(self.job);if(self.disposed)return;if(!r.ok)throw failure(r);self.action=r.action;if(r.slot!==self.slot.value)throw Error('card_changed');
    if(r.state==='running'){
-    if(r.preview){self.overlay(false);var box=el('div',null,'eu-confirm');[['运营商',(r.metadata||{}).serviceProviderName],['配置名称',(r.metadata||{}).profileName],['ICCID',(r.metadata||{}).iccid]].forEach(function(v){box.append(el('strong',v[0]),el('span',v[1]||'—'));});box.append(el('p','确认安装此配置？'));var accepted=await M.confirmBox(t('安装预览'),null,{content:box,okText:t('确认')});if(self.disposed||!self.root.isConnected)return;var reply=await answer(self.job,!!accepted);if(!reply.ok)throw Error(reply.error);self.overlay(true);}
-    if(r.write&&r.write.total>0)self.progress.textContent=t('正在安装配置…')+' '+r.write.percent+'% · '+r.write.written+' / '+r.write.total+' B';else self.progress.textContent=t(self.stage(r.stage));self.timer=window.setTimeout(function(){self.watch();},1000);return;}
-   sessionStorage.removeItem('unisoc-euicc-job');self.job=null;self.busy=false;self.overlay(false);if(r.state!=='done')throw Error(r.submitted?'readback_failed':r.error);self.data=r.result;self.paint();self.state.textContent=t('已识别 eUICC')+' · '+t('操作完成');
+    if(r.preview){
+     self.overlay(false);var box=el('div',null,'eu-confirm'),fields=el('dl',null,'eu-preview'),metadata=r.metadata||{};
+     [['管理卡槽',self.slot.selectedOptions[0].textContent],['安全元件',self.seMask?self.se.selectedOptions[0].textContent:t('默认')],['运营商',metadata.serviceProviderName],['配置名称',metadata.profileName],['ICCID',metadata.iccid],['配置类型',metadata.profileClass]].forEach(function(v){fields.append(el('dt',v[0]),el('dd',v[1]||'—'));});
+     box.append(fields,el('p','确认安装此配置？'));var accepted=await M.confirmBox(t('安装预览'),null,{content:box,okText:t('安装配置')});
+     if(self.disposed||!self.root.isConnected)return;var reply=await answer(self.job,!!accepted);if(!reply.ok)throw failure(reply);self.overlay(true);
+    }
+    if(self.action==='download'){
+     if(r.write&&r.write.total>0){self.writeBar.value=r.write.percent;self.progress.textContent=t('正在安装配置…')+' '+r.write.percent+'% · '+M.fmtBytes(r.write.written)+' / '+M.fmtBytes(r.write.total);}
+     else{self.writeBar.removeAttribute('value');self.progress.textContent=t(self.stage(r.stage));}
+    }else self.progress.textContent=t(self.stage(r.stage));
+    self.timer=window.setTimeout(function(){self.watch();},1000);return;}
+   sessionStorage.removeItem('unisoc-euicc-job');self.job=null;self.busy=false;self.overlay(false);if(r.state!=='done')throw failure(r);self.data=r.result;self.paint();self.state.textContent=t('已识别 eUICC')+' · '+t(self.data.warning&&self.data.warning!=='notification_report'?'操作完成，部分信息未更新，请重新读取卡片':self.data.warning||self.data.failed?'部分通知未发送':'操作完成');
   }catch(e){self.fail(e);}
  },
- fail:function(e){var self=this;if(self.disposed)return;self.busy=false;self.overlay(false);self.data=null;self.paint();if(e.message==='invalid_job'){self.job=null;sessionStorage.removeItem('unisoc-euicc-job');e=Error('operation_interrupted');}self.state.textContent=t(errorText[e.message]||'操作失败，请重新读取卡片确认状态');if(self.job){self.state.textContent=t('无法与设备通信；任务可能仍在运行，可重新检查状态。');self.state.append(button('重新检查状态',function(){self.watch();}));self.root.querySelectorAll('button,input,select').forEach(function(n){if(!self.state.contains(n))n.disabled=true;});}M.toast(self.state.firstChild.textContent||self.state.textContent,{type:'error'});},
+ fail:function(e){var self=this;if(self.disposed)return;self.busy=false;self.overlay(false);self.data=null;self.paint();if(e.message==='invalid_job'){self.job=null;sessionStorage.removeItem('unisoc-euicc-job');e=Error('operation_interrupted');}self.state.textContent=errorMessage(e);if(self.job){self.state.textContent=t('无法与设备通信；任务可能仍在运行，可重新检查状态。');self.state.append(button('重新检查状态',function(){self.watch();}));self.root.querySelectorAll('button,input,select').forEach(function(n){if(!self.state.contains(n))n.disabled=true;});}M.toast(self.state.firstChild.textContent||self.state.textContent,{type:'error'});},
  readQR:async function(file){
   var self=this;if(!file||self.busy)return;if(file.size>16*1024*1024){M.toast(t('二维码中没有有效的 eSIM 激活码'),{type:'error'});return;}
   var image;

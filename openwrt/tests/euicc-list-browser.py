@@ -11,11 +11,12 @@ fixture = runpy.run_path(str(Path(__file__).with_name('euicc-browser.py')))
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--repo', type=Path, default=TOP)
+    parser.add_argument('--browser')
     args = parser.parse_args()
     app = next(args.repo/'openwrt'/name for name in ('luci-app-t551m','luci-app-mu300')
                if (args.repo/'openwrt'/name).is_dir())
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True, executable_path='C:/Program Files/Google/Chrome/Application/chrome.exe')
+        browser = pw.chromium.launch(headless=True, executable_path=args.browser)
         for lang in ('zh','en','tr'):
             for width in (320,768,1440):
                 page = browser.new_page(viewport={'width':width,'height':950})
@@ -26,7 +27,7 @@ def main():
                 page.add_style_tag(content='*{box-sizing:border-box}body{margin:0;padding:12px;font:15px Arial}html{--surface:#202329;--text:#eee;--hairline:#383c44;--background:#10141a;--brand:#50cac0}')
                 fixture['mount'](page,app,lang)
                 page.evaluate('''() => {
-                  fixture.profiles=Array.from({length:125},(_,i)=>({
+                  fixture.profiles=Array.from({length:325},(_,i)=>({
                     iccid:'89123456789012'+String(i).padStart(5,'0'),
                     profileNickname:i===0?'<img src=x onerror=alert(1)>':'Profile '+i,
                     profileName:'Travel '+i,serviceProviderName:i%2?'Carrier B':'Carrier A',
@@ -41,7 +42,7 @@ def main():
                 assert page.locator('.eu-profile-name').first.inner_text()=='<img src=x onerror=alert(1)>'
                 assert page.locator('.eu-previous').is_disabled()
                 assert not page.locator('.eu-next').is_disabled()
-                assert page.locator('.eu-profile-count').inner_text()=={'zh':'共 125 个配置','en':'125 profiles','tr':'125 profil'}[lang]
+                assert page.locator('.eu-profile-count').inner_text()=={'zh':'共 325 个配置','en':'325 profiles','tr':'325 profil'}[lang]
                 assert page.locator('.eu-manage').first.inner_text()=={'zh':'管理','en':'Manage','tr':'Yönet'}[lang]
                 assert page.locator('.eu-profile').first.bounding_box()['height'] < (105 if width<=700 else 65)
                 before=page.evaluate('calls.length')
@@ -74,12 +75,12 @@ def main():
                 page.locator('.eu-filter').select_option('')
                 page.locator('.eu-page-size select').select_option('50')
                 assert page.locator('.eu-profile').count()==50
-                page.locator('.eu-next').click();page.locator('.eu-next').click()
+                for _ in range(6):page.locator('.eu-next').click()
                 assert page.locator('.eu-profile').count()==25
                 assert page.locator('.eu-next').is_disabled()
                 # Page position survives repaint; removing many results clamps it.
                 page.evaluate('component.paint()')
-                assert page.locator('.eu-profile-name').first.inner_text()=='Profile 100'
+                assert page.locator('.eu-profile-name').first.inner_text()=='Profile 300'
                 page.evaluate('component.data.profiles=component.data.profiles.slice(0,2);component.paint()')
                 assert page.locator('.eu-profile').count()==2
                 assert page.locator('.eu-next').is_disabled()
@@ -97,7 +98,7 @@ def main():
                 assert not errors,errors
                 page.close()
         browser.close()
-    print('eUICC list: 125 profiles, 9 language/width cases, search/filter/paging/dialog identity passed')
+    print('eUICC list: 325 profiles, 9 language/width cases, search/filter/paging/dialog identity passed')
 
 
 if __name__=='__main__':main()
