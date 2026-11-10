@@ -1,9 +1,13 @@
 #!/usr/bin/python3
-"""Adapt the attributed e5-webapp-esim UI onto the shared firmware job owner.
-
-No second AT reader, runtime installer, independent lock or radio reset.
-"""
+"""Adapt the e5-webapp-esim UI to shared firmware jobs."""
+import json
 import os
+
+
+def diagnostic(state):
+    detail = state.get('error_detail') or {}
+    return ' · '.join(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                      for value in (detail.get('message'), detail.get('data')) if value is not None) or state.get('error') or ''
 
 
 def invoke(request, api):
@@ -24,7 +28,8 @@ def invoke(request, api):
             slot=int(state.get('slot', '0')), aid=result.get('aid', state.get('aid', '')),
             action={'enable': 'switch', 'disable': 'switch', 'nickname': 'rename'}.get(action, action),
             step=state.get('stage'), preview=state.get('preview', False), metadata=state.get('metadata'),
-            write=state.get('write'), error=state.get('error'), detail=state.get('error') or '',
+            write=state.get('write'), error=state.get('error'), detail=diagnostic(state),
+            error_detail=state.get('error_detail'),
             remove=state.get('remove', False), processed=result.get('processed', 0), failed=result.get('failed', 0),
             warning=result.get('warning'), data=value, job=state.get('job'))
     if method == 'dependencies':
@@ -56,7 +61,6 @@ def invoke(request, api):
         else:
             action = params.get('request')
             if isinstance(action, str):
-                import json
                 action = json.loads(action)
             if not isinstance(action, dict):
                 raise fail('invalid_request')
@@ -77,7 +81,8 @@ def invoke(request, api):
                 raise fail('invalid_request')
     result = api['start'](body)
     if not result.get('ok'):
-        return {'ok': False, 'error': result.get('error'), 'detail': result.get('error')}
+        return {'ok': False, 'error': result.get('error'), 'detail': diagnostic(result),
+                'error_detail': result.get('error_detail')}
     if method in ('snapshot', 'profiles', 'notifications'):
         return {'ok': True, 'wait': method, 'job': result['job']}
     return {'ok': True, 'job': result['job']}
@@ -87,11 +92,12 @@ def snapshot(state, method):
     if state.get('state') == 'running':
         return {'ok': True, 'running': True, 'job': state['job']}
     if state.get('state') != 'done':
-        return {'ok': False, 'error': state.get('error'), 'detail': state.get('error') or 'Read failed'}
+        return {'ok': False, 'error': state.get('error'), 'detail': diagnostic(state),
+                'error_detail': state.get('error_detail')}
     info = state['result']
     if method != 'snapshot':
         return {'ok': True, 'data': info.get(method, [])}
     return {'ok': True, 'aid': info.get('aid', ''), 'ses': info.get('ses', 0),
             'chip': {'ok': True, 'data': info['chip']},
-            'profiles': {'ok': True, 'data': info['profiles']},
-            'notifications': {'ok': True, 'data': info['notifications']}}
+            'profiles': {'ok': info['profiles'] is not None, 'data': info['profiles'], 'error': 'readback_failed'},
+            'notifications': {'ok': info['notifications'] is not None, 'data': info['notifications'], 'error': 'notification_list'}}
