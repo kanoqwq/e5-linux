@@ -40,9 +40,10 @@ CONTROL = {'cancelled': False, 'process': None, 'preview_fd': None}
 
 
 class Failure(Exception):
-    def __init__(self, code):
+    def __init__(self, code, detail=None):
         super().__init__(code)
         self.code = code
+        self.detail = detail
 
 
 def dump(value):
@@ -120,13 +121,17 @@ class Owner:
             p = subprocess.run([self.binary, '-t', '15', f'AT+SPACTCARD={self.slot};{body}'],
                                env=self.env, stdin=subprocess.DEVNULL, capture_output=True,
                                text=True, start_new_session=True, timeout=32)
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
             raise Failure('at_timeout')
+        except OSError as error:
+            raise Failure('modem_unavailable', {'message': str(error)})
         lines = p.stdout.strip().splitlines()
         if p.returncode or not lines or lines[-1].strip() != 'OK':
             if re.search(r'\+CME ERROR:\s*10\b', p.stdout):
                 raise Failure('no_sim')
-            raise Failure('at_rejected')
+            detail = next((line.strip() for line in reversed(lines)
+                           if re.match(r'\s*(?:\+CM[ES] ERROR:|ERROR\b)', line)), '')
+            raise Failure('at_rejected', {'message': detail})
         return p.stdout
 
 
@@ -155,18 +160,22 @@ class APDU:
     def close(self, channel):
         if channel not in self.channels:
             raise Failure('apdu_channel')
-        try:
-            if self.transport == 'logical':
-                self.owner.command(f'+CCHC={channel}')
-            elif self.csim(bytes([0, 0x70, 0x80, channel, 0]))[-2:] != b'\x90\x00':
-                raise Failure('apdu_reply')
-        finally:
-            self.channels.discard(channel)
+        if self.transport == 'logical':
+            self.owner.command(f'+CCHC={channel}')
+        elif self.csim(bytes([0, 0x70, 0x80, channel, 0]))[-2:] != b'\x90\x00':
+            raise Failure('apdu_reply')
+        self.channels.remove(channel)
 
     def cleanup(self):
+        error = None
         for channel in list(self.channels):
-            with contextlib.suppress(Failure):
+            try:
                 self.close(channel)
+            except Failure as failure:
+                if error is None:
+                    error = failure
+        if error is not None:
+            raise error
 
     def request(self, req):
         func, param = req.get('func'), req.get('param')
@@ -182,7 +191,6 @@ class APDU:
             raise Failure('apdu_request')
         data = bytes.fromhex(param)
         if func == 'logic_channel_open':
-            # Only lpac's ISD-R application; no basic-channel SELECT or raw RPC.
             if param.upper() != self.aid or self.aid not in (ISDR, ESTK, *SE_AIDS):
                 raise Failure('apdu_application')
             if self.transport == 'logical':
@@ -194,10 +202,9 @@ class APDU:
             else:
                 reply = self.csim(bytes.fromhex('0070000001'))
                 if len(reply) != 3 or reply[-2:] != b'\x90\x00':
-                    raise Failure('apdu_channel')
+                    raise Failure('apdu_channel', {'message': 'MANAGE CHANNEL', 'data': reply.hex().upper()})
                 channel = reply[0]
-            # lpac 2.3.0 encodes the channel in the low CLA nibble. Refuse
-            # channels requiring the extended ISO7816 CLA representation.
+            # lpac 2.3.0 encodes the channel in the low CLA nibble.
             if channel not in range(1, 4) or channel in self.channels:
                 if channel in range(4, 20):
                     with contextlib.suppress(Failure):
@@ -205,15 +212,14 @@ class APDU:
                             self.owner.command(f'+CCHC={channel}')
                         else:
                             self.csim(bytes([0, 0x70, 0x80, channel, 0]))
-                raise Failure('apdu_channel')
+                raise Failure('apdu_channel', {'message': 'allocated channel', 'data': channel})
             self.channels.add(channel)
             if self.transport == 'csim':
-                cla = channel if channel < 4 else 0x40 | (channel - 4)
-                reply = self.csim(bytes([cla, 0xa4, 4, 0, len(data)]) + data)
+                reply = self.csim(bytes([channel, 0xa4, 4, 0, len(data)]) + data)
                 if reply[-2:] == b'\x6a\x82':
                     raise Failure('not_euicc')
                 if reply[-2:] != b'\x90\x00' and reply[-2] != 0x61:
-                    raise Failure('apdu_select')
+                    raise Failure('apdu_select', {'message': 'SELECT', 'data': reply[-2:].hex().upper()})
             return {'ecode': channel}
         if func == 'logic_channel_close' and len(data) == 1:
             self.close(data[0])
@@ -304,12 +310,12 @@ def http_request(req):
         if len(body) > LIMIT:
             raise Failure('server_reply')
         return {'rcode': reply.status, 'rx': body.hex().upper()}
-    except ssl.SSLError:
-        raise Failure('server_tls')
+    except ssl.SSLError as error:
+        raise Failure('server_tls', {'message': str(error)})
     except (TimeoutError, socket.timeout):
         raise Failure('server_timeout')
-    except OSError:
-        raise Failure('server_unavailable')
+    except OSError as error:
+        raise Failure('server_unavailable', {'message': str(error)})
     finally:
         connection.close()
 
@@ -317,6 +323,7 @@ def http_request(req):
 def lpac(args, adapter, progress):
     if CONTROL['cancelled']:
         raise Failure('cancelled')
+    adapter.cleanup()
     # Drivers selected explicitly: OpenWrt's UCI wrapper must not choose uqmi.
     env = {k: v for k, v in os.environ.items() if not k.startswith(('LPAC_', 'LIBEUICC_'))}
     env.update(LPAC_APDU='stdio', LPAC_HTTP='stdio',
@@ -370,7 +377,6 @@ def lpac(args, adapter, progress):
             if len(line) > 2 * LIMIT + 65536 or sizes[name] > 64 * LIMIT:
                 raise Failure('lpac_reply')
             if name == 'err':
-                # Discard raw APDU/profile/token/error bodies, including stderr.
                 continue
             if not line.strip():
                 continue
@@ -410,8 +416,17 @@ def lpac(args, adapter, progress):
                 final = payload
             else:
                 raise Failure('lpac_reply')
-        if proc.wait(timeout=3) or not final or final.get('code') != 0:
-            raise Failure('cancelled' if CONTROL['cancelled'] else 'lpac_failed')
+        status = proc.wait(timeout=3)
+        if CONTROL['cancelled']:
+            raise Failure('cancelled')
+        if not final or status or final.get('code') != 0:
+            detail = None
+            if final:
+                detail = {k: final[k] for k in ('code', 'message', 'data') if k in final}
+                if len(dump(detail)) > 8192:
+                    detail['message'] = str(detail.get('message') or '')[:512]
+                    detail['data'] = dump(detail.get('data'))[:4096]
+            raise Failure('lpac_failed', detail)
         return final.get('data')
     except (json.JSONDecodeError, UnicodeError, BrokenPipeError):
         raise Failure('lpac_reply')
@@ -431,7 +446,8 @@ def lpac(args, adapter, progress):
                 stream.close()
         CONTROL['process'] = None
         adapter.on_transmit = None
-        adapter.cleanup()
+        with contextlib.suppress(Failure):
+            adapter.cleanup()
 
 
 def validate(data):
@@ -476,7 +492,7 @@ def validate(data):
         data['activation'] = code
     if action == 'notifications':
         sequences = data.get('sequences')
-        if sequences is not None and (not isinstance(sequences, list) or len(sequences) > 256 or
+        if sequences is not None and (not isinstance(sequences, list) or
                 any(type(n) is not int or not 0 <= n <= 0xffffffff for n in sequences)):
             raise Failure('invalid_request')
         if type(data.get('remove', False)) is not bool:
@@ -504,23 +520,22 @@ def probe_se(owner, transport, progress):
         probe.request({'func': 'logic_channel_open', 'param': ESTK})
     except Failure as error:
         if error.code in ('at_rejected', 'not_euicc', 'apdu_select', 'apdu_channel', 'no_sim'):
-            return 0
+            return {}
         raise
     finally:
         probe.cleanup()
-    mask = 0
-    for index, aid in enumerate(SE_AIDS):
+    elements = {}
+    for aid in SE_AIDS:
         try:
-            clean_info(lpac(['chip', 'info'], APDU(owner, transport, aid), progress))
-            mask |= 1 << index
+            elements[aid] = clean_info(lpac(['chip', 'info'], APDU(owner, transport, aid), progress))
         except Failure as error:
             if error.code not in ('lpac_failed', 'not_euicc', 'apdu_select', 'apdu_channel', 'at_rejected'):
                 raise
-    return mask
+    return elements
 
 
 def clean_profiles(rows):
-    if not isinstance(rows, list) or len(rows) > 256:
+    if not isinstance(rows, list):
         raise Failure('lpac_reply')
     result = []
     for row in rows:
@@ -534,14 +549,21 @@ def clean_profiles(rows):
 
 
 def perform(data, owner, progress):
-    adapter = APDU(owner, data.get('transport', 'csim'), data.get('aid') or ISDR)
-    info = clean_info(lpac(['chip', 'info'], adapter, progress))
+    aid = data.get('aid', '')
+    elements = {}
     if data['action'] == 'scan' and data.get('scan_se'):
-        info['ses'] = probe_se(owner, data.get('transport', 'csim'), progress)
+        elements = probe_se(owner, data.get('transport', 'csim'), progress)
+        if elements and not aid:
+            aid = next(iter(elements))
+    adapter = APDU(owner, data.get('transport', 'csim'), aid or ISDR)
+    info = elements[aid] if aid in elements else clean_info(lpac(['chip', 'info'], adapter, progress))
+    if data['action'] == 'scan' and data.get('scan_se'):
+        info['ses'] = sum(1 << index for index, candidate in enumerate(SE_AIDS) if candidate in elements)
     if data['action'] != 'scan' and info['eid'] != data['eid']:
         raise Failure('card_changed')
     action = data['action']
     before_notifications = None
+    delete_error = None
     if action == 'download':
         before_notifications = lpac(['notification', 'list'], adapter, progress)
         if not isinstance(before_notifications, list):
@@ -563,15 +585,11 @@ def perform(data, owner, progress):
         try:
             lpac(args, adapter, progress)
         except Failure as error:
-            # Some 2.3.0/card combinations commit deletion before losing the
-            # final reply. Verify the card instead of ever repeating DELETE.
             if action != 'delete' or error.code != 'lpac_failed':
                 raise
-            remaining = clean_profiles(lpac(['profile', 'list'], adapter, progress))
-            if any(row['iccid'] == data['iccid'] for row in remaining):
-                raise
-            info['diagnostic'] = 'delete_response_lost_verified_absent'
-        progress('command_completed')
+            delete_error = error
+        if delete_error is None:
+            progress('command_completed')
     elif action == 'download':
         args = ['profile', 'download', '-p', '-a', data['activation']]
         if data.get('confirmation'):
@@ -580,7 +598,7 @@ def perform(data, owner, progress):
         progress('command_completed')
     elif action == 'notifications':
         notifications = lpac(['notification', 'list'], adapter, progress)
-        if not isinstance(notifications, list) or len(notifications) > 1024:
+        if not isinstance(notifications, list):
             raise Failure('lpac_reply')
         available = {r['seqNumber'] for r in notifications if isinstance(r, dict) and type(r.get('seqNumber')) is int}
         sequences = data.get('sequences')
@@ -597,36 +615,88 @@ def perform(data, owner, progress):
                 if error.code in ('cancelled', 'card_changed', 'modem_busy'):
                     raise
                 failed += 1
+                info.setdefault('notification_errors', []).append(
+                    {'sequence': sequence, 'error': error.code, 'error_detail': error.detail})
         info.update(processed=processed, failed=failed)
         progress('command_completed')
+    def warning(code, error):
+        if 'warning' not in info:
+            info['warning'] = code
+            info['warning_detail'] = error.detail or {'message': error.code}
+
+    if action in ('enable', 'disable'):
+        progress('refreshing')
+        for index, command in enumerate(('+SFUN=5', '+SFUN=4', '+SFUN=2')):
+            if index:
+                time.sleep(1)
+            try:
+                owner.command(command)
+            except Failure as error:
+                warning('refresh', error)
+                if error.code in ('card_changed', 'modem_busy'):
+                    break
     progress('reading_profiles')
-    info['profiles'] = clean_profiles(lpac(['profile', 'list'], adapter, progress))
-    if action in ('enable', 'disable', 'delete', 'nickname'):
+    info['profiles'] = None
+    for attempt in range(6 if action in ('enable', 'disable') else 1):
+        if action in ('enable', 'disable'):
+            time.sleep(3)
+        try:
+            info['profiles'] = clean_profiles(lpac(['profile', 'list'], adapter, progress))
+            if action not in ('enable', 'disable'):
+                break
+            current = next((r for r in info['profiles'] if r['iccid'] == data['iccid']), None)
+            if current and current['profileState'].lower() == ('enabled' if action == 'enable' else 'disabled'):
+                break
+        except Failure as error:
+            if action == 'scan' or delete_error is not None:
+                raise delete_error or error
+            if attempt == (5 if action in ('enable', 'disable') else 0):
+                warning('readback_failed', error)
+    if info['profiles'] is not None and action in ('enable', 'disable', 'delete', 'nickname'):
         current = next((r for r in info['profiles'] if r['iccid'] == data['iccid']), None)
-        if ((action == 'delete' and current is not None) or
-                (action != 'delete' and current is None) or
-                (action in ('enable', 'disable') and current['profileState'].lower() !=
-                 ('enabled' if action == 'enable' else 'disabled')) or
-                (action == 'nickname' and current['profileNickname'] != data['nickname'])):
-            raise Failure('readback_failed')
-    info['notifications'] = lpac(['notification', 'list'], adapter, progress)
-    if before_notifications is not None:
-        seen = {n.get('seqNumber') for n in before_notifications if isinstance(n, dict)}
-        notifications = info['notifications']
+        mismatch = ((action == 'delete' and current is not None) or
+                    (action != 'delete' and current is None) or
+                    (action in ('enable', 'disable') and current and current['profileState'].lower() !=
+                     ('enabled' if action == 'enable' else 'disabled')) or
+                    (action == 'nickname' and current and current['profileNickname'] != data['nickname']))
+        if mismatch:
+            if delete_error is not None:
+                raise delete_error
+            warning('readback_failed', Failure('readback_failed'))
+        elif delete_error is not None:
+            info['diagnostic'] = 'delete_response_lost_verified_absent'
+    info['notifications'] = None
+    try:
+        notifications = lpac(['notification', 'list'], adapter, progress)
         if not isinstance(notifications, list):
             raise Failure('lpac_reply')
-        for item in notifications:
-            sequence = item.get('seqNumber') if isinstance(item, dict) else None
-            if type(sequence) is int and sequence not in seen:
+        info['notifications'] = notifications
+        if before_notifications is not None:
+            seen = {n.get('seqNumber') for n in before_notifications if isinstance(n, dict)}
+            pending = [item['seqNumber'] for item in notifications if isinstance(item, dict)
+                       and type(item.get('seqNumber')) is int and item['seqNumber'] not in seen]
+            for sequence in pending:
                 try:
                     lpac(['notification', 'process', '-r', str(sequence)], adapter, progress)
                 except Failure as error:
-                    if error.code in ('card_changed', 'cancelled', 'modem_busy'):
-                        raise
-                    info['warning'] = 'notification_report'
-        if notifications:
-            info['notifications'] = lpac(['notification', 'list'], adapter, progress)
-    info['aid'] = data.get('aid', '')
+                    warning('notification_report', error)
+            if pending:
+                info['notifications'] = lpac(['notification', 'list'], adapter, progress)
+    except Failure as error:
+        if action == 'scan':
+            raise
+        warning('notification_list', error)
+    if action in ('download', 'delete'):
+        try:
+            updated = clean_info(lpac(['chip', 'info'], adapter, progress))
+            if updated['eid'] != info['eid']:
+                raise Failure('card_changed')
+            info.update(updated)
+        except Failure as error:
+            info['free_bytes'] = None
+            info['chip'] = {'eidValue': info['eid']}
+            warning('chip_info', error)
+    info['aid'] = aid
     return info
 
 
@@ -747,6 +817,8 @@ def worker(key, fd):
         state.update(state='done', stage='done')
     except Failure as error:
         state.update(state='failed', error=error.code)
+        if error.detail is not None:
+            state['error_detail'] = error.detail
     except Exception:
         state.update(state='failed', error='operation_failed')
     finally:
@@ -827,6 +899,8 @@ def main():
             raise Failure('invalid_request')
     except Failure as error:
         answer = {'ok': 0, 'error': error.code}
+        if error.detail is not None:
+            answer['error_detail'] = error.detail
     except Exception:
         answer = {'ok': 0, 'error': 'operation_failed'}
     print(dump(answer))

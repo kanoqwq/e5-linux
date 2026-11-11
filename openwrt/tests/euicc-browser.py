@@ -14,7 +14,7 @@ def mount(page, app, lang='zh', writable=True):
     page.evaluate('''async ([common,source,lang,writable])=>{
       window.calls=[];window.preview=false;window.hold=false;window.rejectStart=false;window.statusBroken=false;
       window.fixture={eid:'89049032000100123450001234567890',firmware:'Test',free_bytes:80000,ses:3,
-        profiles:[{iccid:'8912345678901234567',profileState:'enabled',profileNickname:'<img src=x onerror=alert(1)>',serviceProviderName:'Example',profileName:'Data'}],notifications:[]};
+        profiles:[{iccid:'8912345678901234567',profileState:'enabled',profileNickname:'<img src=x onerror=alert(1)>',serviceProviderName:'Example',profileName:'Data'}],notifications:[{seqNumber:7,profileManagementOperation:'install',iccid:'8912345678901234567',notificationAddress:'rsp.example.com'},{seqNumber:8,profileManagementOperation:'enable',iccid:'8912345678901234567',notificationAddress:'rsp.example.com'}]};
       window.task=null;
       const rpc={declare:o=>async(...args)=>{
         if(o.method==='sim_get')return {slots:2,current:'0',physical:{supported:true,model:'f50pro',logical_cards:[3,4]}};
@@ -28,14 +28,15 @@ def mount(page, app, lang='zh', writable=True):
         if(o.method==='cancel'){hold=false;task.state='failed';task.error='cancelled';return {ok:1};}
         if(preview&&task.action==='download')return {...task,preview:true,metadata:{profileName:'Example download',serviceProviderName:'Example',iccid:'8912345678901234567'}};
         if(statusBroken)throw Error('connection lost');
-        if(hold)return {...task,stage:'reading_profiles'};
+        if(hold)return {...task,stage:task.action==='download'?'writing':'reading_profiles',write:window.writeFixture};
         if(task.state==='running'){
           const profile=fixture.profiles.find(p=>p.iccid===task.iccid);
           if(task.action==='disable')profile.profileState='disabled';
           if(task.action==='enable')profile.profileState='enabled';
           if(task.action==='nickname')profile.profileNickname=task.nickname;
           if(task.action==='delete')fixture.profiles=[];
-          task.state='done';task.result=structuredClone(fixture);
+          if(task.action==='notifications')fixture.notifications=fixture.notifications.filter(n=>task.sequences&&!task.sequences.includes(n.seqNumber));
+          task.state='done';task.result=structuredClone(fixture);task.result.aid=task.aid||(fixture.ses&1?'A06573746B6D65FFFF4953442D522030':fixture.ses&2?'A06573746B6D65FFFF4953442D522031':'');
         }return task;
       }};
       window.L={env:{lang},hasViewPermission:()=>writable,resource:p=>'http://euicc.test/'+p};
@@ -52,9 +53,9 @@ def idle(page):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--repo', type=Path, default=TOP)
-    a=p.parse_args();app=next(a.repo/'openwrt'/n for n in ('luci-app-t551m','luci-app-mu300') if (a.repo/'openwrt'/n).exists())
+    p.add_argument('--browser');a=p.parse_args();app=next(a.repo/'openwrt'/n for n in ('luci-app-t551m','luci-app-mu300') if (a.repo/'openwrt'/n).exists())
     with sync_playwright() as pw:
-        browser=pw.chromium.launch(headless=True,executable_path='C:/Program Files/Google/Chrome/Application/chrome.exe')
+        browser=pw.chromium.launch(headless=True,executable_path=a.browser)
         count=0
         for lang in ('zh','en','tr'):
           for theme in ('bootstrap','aurora-light','aurora-dark'):
@@ -124,6 +125,21 @@ def main():
         page.locator('.eu-profile .eu-manage').click();page.locator('.mud-dlg button[data-i="1"]').click();page.locator('.mud-dlg input').fill('Renamed')
         page.locator('.mud-dlg button[data-r="1"]').click();idle(page)
         assert page.locator('.eu-profile-name').inner_text()=='Renamed'
+        assert '78.1 KB' in page.evaluate('component.info.textContent')
+        assert page.locator('.eu-notifications li').count()==2
+        page.locator('.eu-notifications li').first.locator('button').first.click();idle(page)
+        assert page.evaluate('calls.filter(c=>c.method==="start").at(-1).args[12]')==[7]
+        assert page.locator('.eu-notifications li').count()==1
+        assert '8 ·' in page.locator('.eu-notifications li').inner_text()
+        before=page.evaluate('calls.filter(c=>c.method==="start").length')
+        page.locator('.eu-notifications li button').last.click()
+        page.locator('.mud-dlg button[data-r="0"]').click()
+        assert page.evaluate('calls.filter(c=>c.method==="start").length')==before
+        page.locator('.eu-notifications li button').last.click()
+        page.locator('.mud-dlg button[data-r="1"]').click();idle(page)
+        assert page.evaluate('calls.filter(c=>c.method==="start").at(-1).args[12]')==[8]
+        assert page.evaluate('calls.filter(c=>c.method==="start").at(-1).args[13]') is True
+        assert page.locator('.eu-notifications li').count()==0
         qr=io.BytesIO();qrcode.make('LPA:1$rsp.example$test').save(qr,format='PNG')
         page.locator('input[type=file]').set_input_files({'name':'test.png','mimeType':'image/png','buffer':qr.getvalue()})
         page.wait_for_function('component.activation.value==="LPA:1$rsp.example$test"')
@@ -146,12 +162,21 @@ def main():
             page.evaluate('() => {preview=true;component.run("download",{activation:"LPA:1$rsp.example$example",confirm:"yes"});}')
             page.wait_for_selector('.mud-dlg')
             assert 'Example download' in page.locator('.mud-dlg').inner_text()
+            assert '安全元件' in page.locator('.eu-preview').inner_text()
+            assert 'Example' in page.locator('.eu-preview').inner_text()
             page.locator('.mud-dlg button[data-r="%s"]' % ('1' if accept else '0')).click();idle(page)
             assert page.evaluate('calls.filter(c=>c.method==="answer").at(-1).args[1]')==accept
             if not accept:
                 page.locator('.eu-top button').click();idle(page)
         page.evaluate('hold=true;component.run("download",{activation:"LPA:1$rsp.example$example",confirm:"yes"})')
-        page.wait_for_selector('.eu-modal button');page.locator('.eu-modal button').click();idle(page)
+        page.wait_for_selector('.eu-modal progress')
+        assert page.locator('.eu-modal progress').get_attribute('value') is None
+        page.evaluate('writeFixture={written:51200,total:102400,percent:50}')
+        page.wait_for_function('document.querySelector(".eu-modal progress")?.value===50')
+        assert '50%' in page.locator('.eu-modal').inner_text()
+        assert '50.0 KB / 100 KB' in page.locator('.eu-modal').inner_text()
+        page.locator('.eu-modal button').click();idle(page)
+        page.evaluate('delete window.writeFixture')
         assert page.evaluate('calls.filter(c=>c.method==="cancel").length')==1
         # A completed TLS failure must be visible even when the status row is
         # scrolled out of view. It is not a lost RPC and must never replay.
@@ -166,6 +191,44 @@ def main():
         assert page.evaluate('component.job') is None
         assert page.evaluate('calls.filter(c=>c.method==="start").length')==before
         assert page.evaluate('sessionStorage.getItem("unisoc-euicc-job")') is None
+        page.locator('.eu-top button').click();idle(page)
+        page.evaluate("task.state='failed';task.error='lpac_failed';task.error_detail={code:-1,message:'confirmation_code',data:'<img src=x onerror=alert(1)> required'};component.job=task.job;component.watch()")
+        idle(page)
+        assert 'confirmation_code' in page.locator('.eu-state').inner_text()
+        assert '<img src=x onerror=alert(1)> required' in page.locator('.eu-state').inner_text()
+        assert page.locator('.eu-state img').count()==0
+        page.locator('.eu-top button').click();idle(page)
+        page.evaluate("fixture.failed=1;fixture.notification_errors=[{sequence:7,error:'lpac_failed',error_detail:{message:'notification_process',data:'server refused'}}]")
+        page.locator('.eu-top button').click();idle(page)
+        assert '部分通知未发送' in page.locator('.eu-state').inner_text()
+        assert 'notification_process' in page.evaluate('component.notes.textContent')
+        assert 'server refused' in page.evaluate('component.notes.textContent')
+        page.evaluate('delete fixture.failed;delete fixture.notification_errors')
+        page.evaluate("component.aid='';component.seMask=0")
+        page.locator('.eu-top button').click();idle(page)
+        before=page.evaluate('calls.filter(c=>c.method==="start").length')
+        page.locator('.eu-manage').click()
+        page.evaluate("component.aid='A06573746B6D65FFFF4953442D522031'")
+        page.locator('.mud-dlg button[data-i="0"]').click()
+        assert page.evaluate('calls.filter(c=>c.method==="start").length')==before
+        assert page.locator('.mud-dlg').count()==0
+        page.evaluate('component.paint()')
+        page.locator('.eu-manage').click();page.locator('.mud-dlg button[data-i="0"]').click()
+        assert 'SE 0' in page.locator('.mud-dlg').inner_text()
+        page.evaluate("component.aid='A06573746B6D65FFFF4953442D522031'")
+        page.locator('.mud-dlg input').fill('yes');page.locator('.mud-dlg button[data-r="1"]').click()
+        assert page.evaluate('calls.filter(c=>c.method==="start").length')==before
+        page.evaluate('component.paint()')
+        page.locator('.eu-top select').nth(1).select_option('A06573746B6D65FFFF4953442D522031');idle(page)
+        page.evaluate('hold=true;component.run("download",{activation:"LPA:1$rsp.example$example",confirm:"yes"})')
+        page.wait_for_function('component.busy && !!sessionStorage.getItem("unisoc-euicc-job")')
+        before=page.evaluate('calls.filter(c=>c.method==="start").length')
+        page.evaluate('component.unload();document.body.replaceChildren(component.render(component.sim))')
+        page.wait_for_function('component.busy')
+        assert page.evaluate('component.aid')=='A06573746B6D65FFFF4953442D522031'
+        assert page.locator('.eu-top select').nth(1).input_value()=='A06573746B6D65FFFF4953442D522031'
+        page.evaluate('hold=false');idle(page)
+        assert page.evaluate('calls.filter(c=>c.method==="start").length')==before
         # Aurora styles every header as a sticky navigation bar. View titles
         # must stay in normal flow and cannot cover the real navbar on scroll.
         page.add_style_tag(content='header{position:sticky;top:0;z-index:40;background:#18212b;height:56px;padding:16px}')

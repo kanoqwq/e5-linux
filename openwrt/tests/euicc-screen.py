@@ -39,4 +39,11 @@ class Screen(unittest.TestCase):
   self.state.update(state='done',action='scan',result={'chip':{'eidValue':EID},'profiles':[],'notifications':[],'ses':3})
   out=self.invoke('job_status',job=JOB,format='snapshot');self.assertEqual(out['chip']['data']['eidValue'],EID);self.assertEqual(out['ses'],3)
   self.state.update(state='failed',error='card_changed');self.assertFalse(self.invoke('job_status',job=JOB,format='snapshot')['ok'])
+ def test_original_failure_detail_survives_status_and_snapshot(self):
+  detail={'code':-1,'message':'confirmation_code','data':'required'}
+  self.state.update(state='failed',error='lpac_failed',error_detail=detail)
+  for params in ({},{'format':'snapshot'}):
+   out=self.invoke('job_status',job=JOB,**params)
+   self.assertEqual(out['error_detail'],detail)
+   self.assertEqual(out['detail'],'confirmation_code · required')
 if __name__=='__main__':unittest.main(verbosity=2)
