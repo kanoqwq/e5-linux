@@ -111,6 +111,8 @@ def audit_root(info):
     import runpy
     wifi_id = runpy.run_path(str(TOP / 'openwrt/wifi-sae-state.py'))['build_id']()
     expected['etc/e5/wifi-sae.build-id'] = hashlib.sha256((wifi_id + '\n').encode()).hexdigest()
+    iwinfo_id = runpy.run_path(str(TOP / 'openwrt/iwinfo-ap-scan-state.py'))['build_id']()
+    expected['etc/e5/iwinfo-ap-scan.build-id'] = hashlib.sha256((iwinfo_id + '\n').encode()).hexdigest()
     expected['lib/netifd/hostapd-unisoc.sh'] = file_digest(TOP / 'openwrt/hostapd-unisoc.sh')
     expected['usr/share/ucode/wifi/unisoc-sae.uc'] = file_digest(TOP / 'openwrt/hostapd-unisoc.uc')
     found, versions, modules = {}, {}, set()

@@ -13,6 +13,7 @@
   "ufs_identity_helper": "{repo}/out/changxing60/ufs-id",
   "block_apk": "{repo}/out/openwrt/block-mount-guarded.apk",
   "wifi_apks": "{repo}/work/wifi-sae",
+  "iwinfo_apks": "{repo}/work/iwinfo-ap-scan",
   "local_kernel_build": {
     "source": "{workspace}/sources/e5-kernel",
     "revision": "020b970e351eee3887e6caaf2d653926e7086e44"

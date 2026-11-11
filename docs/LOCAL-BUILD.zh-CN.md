@@ -78,6 +78,7 @@ python3 tools/build-release.py check --profiles e5 t551m m8 t512n yuanhang41s k1
 ```sh
 python3 tools/build-release.py run --label modem -- bash openwrt/build-modemmanager.sh
 python3 tools/build-release.py run --label wifi -- bash openwrt/build-hostapd.sh
+python3 tools/build-release.py run --label iwinfo-ap-scan -- sh openwrt/build-iwinfo-ap-scan.sh
 python3 tools/build-release.py run --label block-mount -- bash openwrt/build-block-mount.sh
 ```
 

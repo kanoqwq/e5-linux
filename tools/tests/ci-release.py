@@ -105,6 +105,9 @@ class RootAudit(unittest.TestCase):
             wifi = runpy.run_path(str(TOP / 'openwrt/wifi-sae-state.py'))
             for name in wifi['SOURCES']:
                 (top / 'openwrt' / name).write_bytes((TOP / 'openwrt' / name).read_bytes())
+            iwinfo = runpy.run_path(str(TOP / 'openwrt/iwinfo-ap-scan-state.py'))
+            for name in iwinfo['SOURCES']:
+                (top / 'openwrt' / name).write_bytes((TOP / 'openwrt' / name).read_bytes())
             for name in ('vendor-start.sh', 'e5-modem-coldboot'):
                 (top / 'rootfs/overlay/opt/e5' / name).write_bytes(b'startup fixture')
                 files = {**files, 'opt/e5/' + name: b'startup fixture'}
@@ -135,6 +138,7 @@ class RootAudit(unittest.TestCase):
                 'etc/e5/build-time': b'123', 'lib/modules/6.18-e5/modem/sipc_wwan.ko': b'module',
                 'etc/e5/block-mount.build-id': (release.block_build_id() + '\n').encode(),
                 'etc/e5/wifi-sae.build-id': (wifi['build_id']() + '\n').encode(),
+                'etc/e5/iwinfo-ap-scan.build-id': (runpy.run_path(str(TOP / 'openwrt/iwinfo-ap-scan-state.py'))['build_id']() + '\n').encode(),
                 'lib/netifd/hostapd-unisoc.sh': (TOP / 'openwrt/hostapd-unisoc.sh').read_bytes(),
                 'usr/share/ucode/wifi/unisoc-sae.uc': (TOP / 'openwrt/hostapd-unisoc.uc').read_bytes(),
                 'sbin/block': b'block', 'lib/libblkid-tiny.so': b'library', 'etc/init.d/fstab': b'init'}

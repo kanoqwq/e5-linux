@@ -45,6 +45,7 @@ def main(*, profile='yuanhang41s', here=HERE):
     if kernel==build or out==kernel or out==build or Path('/') in (build,out):
         parser.error('Source, object and delivery directories must be separate')
     runpy.run_path(str(here/'prepare-kernel.py'))['apply'](kernel)
+    subprocess.run(['python3',str(TOP/'devices/test_wifi_scan.py'),str(kernel)],check=True)
     subprocess.run(['python3',str(TOP/'devices/common/test_power_probe.py'),
                     '--kernel',str(kernel)],check=True)
     tests=['test_boot_soc.py', 'test_battery_periodic.py', 'test_capacity_remap.py']

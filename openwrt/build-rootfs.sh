@@ -110,6 +110,8 @@ BLOCK_APK="$OUT/block-mount-guarded.apk"
 E5_WRT_VER="$VER" sh "$HERE/build-block-mount.sh" "$BLOCK_APK"
 WIFI_APKS="$TOP/work/wifi-sae"
 UNISOC_WRT_VER="$VER" sh "$HERE/build-hostapd.sh" "$WIFI_APKS"
+IWINFO_APKS=${UNISOC_IWINFO_APKS:-$TOP/work/iwinfo-ap-scan}
+sh "$HERE/build-iwinfo-ap-scan.sh" "$IWINFO_APKS"
 LPAC_APKS=${UNISOC_LPAC_APKS:-$(python3 "$TOP/openwrt/lpac-state.py" --path)}
 UNISOC_WRT_VER="$VER" sh "$TOP/openwrt/build-lpac.sh" "$LPAC_APKS"
 
@@ -294,6 +296,7 @@ docker run --rm --platform linux/arm64 \
     -v "$BLOCK_APK":/in/block-mount-guarded.apk:ro \
     -v "$BLOCK_APK.build-id":/in/block-mount.build-id:ro \
     -v "$WIFI_APKS":/in/wifi-sae:ro \
+    -v "$IWINFO_APKS":/in/iwinfo-ap-scan:ro \
     -v "$LPAC_APKS":/in/lpac:ro \
     -v "$TOP/openwrt":/in/euicc-source/openwrt:ro \
     -v "$SA":/in/sa:ro -e STANDALONE="$STANDALONE" -v "$RM":/in/root-modules:ro \
@@ -313,6 +316,7 @@ apk add --allow-untrusted /in/apk/bluez-libs-*.apk /in/apk/bluez-daemon-*.apk /i
 # (alsa-utils: aplay and amixer for the speaker, e5-audio-dsp and e5-volume)
 # (curl: the webhook of the SMS forward, /usr/libexec/e5-sms)
 apk add --allow-untrusted /in/wifi-sae/*.apk >/dev/null
+apk add --allow-untrusted /in/iwinfo-ap-scan/*.apk >/dev/null
 # The cipher capability helper needs the section omitted by reduced iw builds.
 apk add iwinfo iw-full ip-full bash mount-utils luci-proto-modemmanager \
     dbus-utils alsa-utils curl openssl-util msmtp r8152-firmware ttyd luci-app-ttyd luci-i18n-ttyd-tr >/dev/null
@@ -380,6 +384,10 @@ mkdir -p $R/proc $R/sys $R/dev $R/tmp $R/mnt/e5-disk $R/opt/e5/android $R/opt/e5
 mkdir -p $R/etc/e5
 cp /in/block-mount.build-id $R/etc/e5/block-mount.build-id
 cp /in/wifi-sae/build-id $R/etc/e5/wifi-sae.build-id
+cp /in/iwinfo-ap-scan/build-id $R/etc/e5/iwinfo-ap-scan.build-id
+[ -s "$R/usr/lib/libiwinfo.so.20230701" ] || {
+    echo "AP scan library missing from rootfs" >&2; exit 1;
+}
 cp /in/wifi-sae/source-info $R/etc/e5/wifi-sae.source-info
 for f in sbin/block lib/libblkid-tiny.so etc/init.d/fstab; do
     [ -s "$R/$f" ] || { echo "guarded block-mount payload missing: $f" >&2; exit 1; }

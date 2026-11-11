@@ -43,14 +43,17 @@ def main():
         p.add_argument('--' + name, type=Path, required=True)
     p.add_argument('--apk-image', default='mu300-openwrt-base:25.12.5')
     p.add_argument('--wifi-apks', type=Path, default=TOP / 'work/wifi-sae')
+    p.add_argument('--iwinfo-apks', type=Path, default=TOP / 'work/iwinfo-ap-scan')
     p.add_argument('--lpac-apks', type=Path, required=True)
     p.add_argument('--release-version', help='Optional explicit private release version')
     p.add_argument('--cc', default='aarch64-linux-gnu-gcc')
     a = p.parse_args()
     runpy.run_path(str(TOP / 'openwrt/bundle/flash.py'))['validate_installer_busybox'](a.busybox)
     wifi_build = runpy.run_path(str(TOP / 'openwrt/wifi-sae-state.py'))['inspect'](a.wifi_apks)
+    iwinfo_build = runpy.run_path(str(TOP / 'openwrt/iwinfo-ap-scan-state.py'))['inspect'](a.iwinfo_apks)
     runpy.run_path(str(TOP / 'openwrt/lpac-state.py'))['inspect'](a.lpac_apks)
     wifi_args = ' '.join('/wifi-sae/' + n for n in sorted(wifi_build['apks']))
+    iwinfo_args = ' '.join('/iwinfo-ap-scan/' + n for n in sorted(iwinfo_build['apks']))
     if os.geteuid() != 0 or a.work.exists():
         p.error('Run as root with a new work directory')
     expected_id = runpy.run_path(str(TOP / 'tools/ci-release.py'))['block_build_id']()
@@ -108,13 +111,14 @@ def main():
         '-v', f'{root}:/target', '-v', f'{a.block_apk.resolve()}:/input/block.apk:ro',
         '-v', f'{TOP / "out/openwrt"}:/modem:ro',
         '-v', f'{a.wifi_apks.resolve()}:/wifi-sae:ro',
+        '-v', f'{a.iwinfo_apks.resolve()}:/iwinfo-ap-scan:ro',
         '--entrypoint', '/bin/sh', a.apk_image, '-ec',
         # Match the existing MU300 builder: transient index/download failures
         # retry in this staging tree, without restarting every model's package.
         'apk_retry() { attempt=1; while ! apk "$@"; do '
         '[ "$attempt" -lt 3 ] || return 1; attempt=$((attempt + 1)); '
         'echo "Retrying apk download (attempt $attempt/3)" >&2; sleep 3; done; }; '
-        'apk --root /target --no-scripts --no-network add --allow-untrusted /input/block.apk ' + modem_args + ' ' + wifi_args + ' && '
+        'apk --root /target --no-scripts --no-network add --allow-untrusted /input/block.apk ' + modem_args + ' ' + wifi_args + ' ' + iwinfo_args + ' && '
         'mkdir /tmp/modem-verify && apk extract --allow-untrusted --destination /tmp/modem-verify /modem/' + modem_daemon + ' && '
         'cmp /target/usr/sbin/ModemManager /tmp/modem-verify/usr/sbin/ModemManager && '
         'ucode /target/usr/libexec/unisoc-modem/disable-channel-analysis /target && '
@@ -147,6 +151,9 @@ def main():
         forward[pkg] = match.group(1)
     (root / 'etc/e5/block-mount.build-id').write_bytes(Path(str(a.block_apk) + '.build-id').read_bytes())
     (root / 'etc/e5/wifi-sae.build-id').write_text(wifi_build['build_id'] + '\n')
+    (root / 'etc/e5/iwinfo-ap-scan.build-id').write_text(iwinfo_build['build_id'] + '\n')
+    if not (root/'usr/lib/libiwinfo.so.20230701').is_file():
+        raise ValueError('AP scan library missing from rootfs')
     (root / 'etc/e5/wifi-sae.source-info').write_bytes((a.wifi_apks / 'source-info').read_bytes())
     # Do not execute target init scripts on the build host.
     fstab = (root / 'etc/init.d/fstab').read_text()
@@ -333,6 +340,7 @@ def audit(root, profile, release):
     for name in ('sbin/block', 'lib/libblkid-tiny.so', 'etc/init.d/fstab',
                  'lib/netifd/hostapd-unisoc.sh', 'usr/share/ucode/wifi/unisoc-sae.uc',
                  'etc/e5/wifi-sae.build-id',
+                 'etc/e5/iwinfo-ap-scan.build-id', 'usr/lib/libiwinfo.so.20230701',
                  'usr/sbin/ModemManager', 'usr/libexec/e5-infoscreen/session',
                  'usr/bin/openssl', 'usr/bin/msmtp', 'usr/bin/python3',
                  'opt/e5/t551m-atd', 'usr/libexec/e5-mm-state',

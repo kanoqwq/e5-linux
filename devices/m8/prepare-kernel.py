@@ -28,6 +28,8 @@ def apply(kernel, *, charger_adapter=None, recipient='m8'):
     if not head.startswith(BASE):
         raise ValueError('Expected linux-lts-e5 ' + BASE)
     runpy.run_path(str(HERE.parent / 'common/display.py'))['apply'](kernel)
+    if recipient == 'm8':
+        runpy.run_path(str(HERE / 'display-esd.py'))['apply'](kernel)
     runpy.run_path(str(HERE.parent / 'common/usb-ncm.py'))['apply'](kernel)
     runpy.run_path(str(HERE.parent / 'common/boot-optimization.py'))['apply'](kernel)
     runpy.run_path(str(HERE.parent / 'common/power.py'))['apply'](kernel)
