@@ -82,7 +82,22 @@ done
 if { [ "${E5_NV_POLICY:-preserve}" = original ] || [ ! -d opt/e5/nv ]; } && [ -e etc/e5-nv ]; then
     settings="$settings etc/e5-nv"
 fi
-tar -cf /.e5-update/settings.tar $settings
+# Older initramfs updaters do not protect every integrated screen app/version
+# file after restoring /etc. Exclude image-owned files at the source as well,
+# so updating from an old boot cannot overwrite the incoming image's eSIM UI.
+# BEGIN image-owned-settings-filter
+exclude=$(mktemp "${TMPDIR:-/tmp}/e5-settings-exclude.XXXXXX")
+printf '%s\n' etc/e5-infoscreen/plugins/phone etc/e5-infoscreen/plugins/esim \
+    etc/e5/image-version etc/e5/image-form etc/e5/build-time etc/e5/release.json \
+    etc/e5/build.json etc/e5/feature-port.json etc/e5/device-profile > "$exclude"
+# OpenWrt BusyBox tar supports -X, but need not support --exclude.
+if tar -cf /.e5-update/settings.tar -X "$exclude" $settings; then
+    rm -f "$exclude"
+else
+    rm -f "$exclude"
+    exit 1
+fi
+# END image-owned-settings-filter
 cd /
 umount "$view"; rmdir "$view"; trap - EXIT
 cd /.e5-update

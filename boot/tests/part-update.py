@@ -3,6 +3,7 @@
 import gzip
 import hashlib
 import io
+import json
 import os
 import runpy
 import struct
@@ -57,6 +58,12 @@ class OfflineUpdate(unittest.TestCase):
             (base/'dev').mkdir()
             (base / 'etc/e5-infoscreen/plugins/phone').mkdir(parents=True)
             (base / 'etc/e5-infoscreen/plugins/phone/phone.js').write_text('new phone code')
+            esim = base / 'etc/e5-infoscreen/plugins/esim'
+            esim.mkdir(parents=True)
+            (esim/'manifest.json').write_text('{"id":"esim","version":"new"}')
+            (esim/'esim.css').write_text('new wallpaper-aware CSS')
+            (esim/'esim.js').write_text('new theme-aware JS')
+            (base/'etc/e5/release.json').write_text(json.dumps({'image_version':'new release'}))
             (base / 'etc/e5/device-profile').write_text('t551m\n')
             (base / 'etc/e5/image-version').write_text('new release\n')
             (base / 'sbin').mkdir(); (base / 'sbin/init').write_text('#!/bin/sh\n'); (base / 'sbin/init').chmod(0o755)
@@ -71,6 +78,13 @@ class OfflineUpdate(unittest.TestCase):
                 **({'etc/e5/sd-root':b'e5-openwrt-sd\n', 'etc/e5/sd-gen':b'7\n'} if kind == 'sd' else {}),
                 'etc/e5/image-version':b'OLD release', 'etc/e5/device-profile':b't551m\n',
                 'etc/e5-infoscreen/plugins/phone/phone.js':b'old phone code',
+                'etc/e5-infoscreen/plugins/esim/manifest.json':b'{"id":"esim","version":"old"}',
+                'etc/e5-infoscreen/plugins/esim/esim.css':b'old opaque CSS',
+                'etc/e5-infoscreen/plugins/esim/esim.js':b'old JS',
+                'etc/e5-infoscreen/plugins/esim/obsolete.js':b'removed built-in file',
+                'etc/e5-infoscreen/plugins/user-app/main.js':b'user installed app',
+                'etc/e5-infoscreen/wallpapers/desktop.png':b'user wallpaper',
+                'etc/e5/release.json':b'{"image_version":"old release"}',
                 'etc/shadow':b'root:saved-password-hash:\n'})
             archive(pending / 'ext4-tools.tar', {'lib/ld-musl-aarch64.so.1':b'#!/bin/sh\nshift 3\nexec /usr/sbin/e2fsck "$@"\n',
                 'usr/sbin/e2fsck':b'placeholder'})
@@ -143,6 +157,12 @@ reboot() {{ echo REBOOT >> "{root}/calls"; }}
                 self.assertIn('saved-password-hash',(new/'etc/shadow').read_text())
                 self.assertEqual((new/'etc/e5/image-version').read_text(),'new release\n')
                 self.assertEqual((new/'etc/e5-infoscreen/plugins/phone/phone.js').read_text(),'new phone code')
+                self.assertEqual((new/'etc/e5-infoscreen/plugins/esim/esim.css').read_text(),'new wallpaper-aware CSS')
+                self.assertEqual((new/'etc/e5-infoscreen/plugins/esim/esim.js').read_text(),'new theme-aware JS')
+                self.assertEqual(json.loads((new/'etc/e5/release.json').read_text())['image_version'],'new release')
+                self.assertFalse((new/'etc/e5-infoscreen/plugins/esim/obsolete.js').exists())
+                self.assertEqual((new/'etc/e5-infoscreen/plugins/user-app/main.js').read_bytes(),b'user installed app')
+                self.assertEqual((new/'etc/e5-infoscreen/wallpapers/desktop.png').read_bytes(),b'user wallpaper')
                 self.assertEqual((new/'lib/firmware/wcnmodem.bin').read_bytes(),b'own firmware')
                 if nv_present:
                     for name in (*nv['NAMES'],'factory-sha256.json'):

@@ -39,7 +39,7 @@ du() { for p; do [ "$p" = -k ] || printf '60000 %s\n' "$p"; done; }
 
     def test_settings_nv_history_is_not_duplicated_when_archived(self):
         source=(TOP/'openwrt/device-stage-part-update.sh').read_text()
-        code=source[source.index('settings='):source.index('tar -cf /.e5-update/settings.tar')]
+        code=source[source.index('settings='):source.index('# BEGIN image-owned-settings-filter')]
         for working,policy,expected in ((True,'preserve',False),(False,'preserve',True),(True,'original',True)):
             with self.subTest(working=working,policy=policy),tempfile.TemporaryDirectory() as d:
                 root=Path(d);(root/'etc/e5-nv').mkdir(parents=True)

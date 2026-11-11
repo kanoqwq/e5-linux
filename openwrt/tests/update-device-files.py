@@ -2,11 +2,46 @@
 """Exercise both updater collectors with a board's own firmware and symlinks."""
 from pathlib import Path
 import re
+import os
 import subprocess
 import tarfile
 import tempfile
 
 TOP = Path(__file__).resolve().parents[2]
+
+# Exercise the real settings-archive command with both host and target tar.
+# The resulting archive must be safe even for a pre-fix initramfs restorer.
+stage_source = (TOP/'openwrt/device-stage-part-update.sh').read_text()
+start = stage_source.index('# BEGIN image-owned-settings-filter')
+archive_command = stage_source[start:stage_source.index('# END image-owned-settings-filter', start)]
+with tempfile.TemporaryDirectory(prefix='e5-settings-filter-') as folder:
+    root = Path(folder)
+    preserved = {'etc/config/wireless': b'user password',
+                 'etc/e5/install.conf': b'own device settings',
+                 'etc/e5-infoscreen/wallpapers/desktop.png': b'user wallpaper',
+                 'etc/e5-infoscreen/plugins/user-app/main.js': b'user app'}
+    excluded = {'etc/e5-infoscreen/plugins/phone/phone.js': b'old phone',
+                'etc/e5-infoscreen/plugins/esim/esim.css': b'old eSIM'}
+    excluded.update({'etc/e5/'+name: b'old version' for name in
+                     ('image-version','image-form','build-time','release.json',
+                      'build.json','feature-port.json','device-profile')})
+    for name, data in {**preserved, **excluded}.items():
+        path = root/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+    runners = [['sh','-c']]
+    if os.environ.get('E5_SETTINGS_TARGET_TAR')=='1':
+        runners.append(['docker','run','--rm','--pull=never','--network','none',
+            '--platform','linux/arm64','-v',str(root)+':'+str(root),'-w',str(root),
+            'mu300-openwrt-base:25.12.5','/bin/sh','-c'])
+    for runner in runners:
+        output = root/'settings.tar'
+        code = archive_command.replace('/.e5-update/settings.tar', str(output))
+        harness = 'set -eu\nsettings="etc/config etc/e5 etc/e5-infoscreen"\n'+code
+        subprocess.run([*runner,harness],cwd=root,check=True)
+        with tarfile.open(output) as stream:
+            members = {m.name.removeprefix('./') for m in stream}
+            for name,data in preserved.items():
+                assert name in members and stream.extractfile(name).read()==data,(runner,name)
+            assert not members.intersection(excluded),(runner,members.intersection(excluded))
 files = {
     'lib/firmware/wcnmodem.bin': b'own CP',
     'lib/firmware/aw883xx_acf.bin': b'own amp calibration',

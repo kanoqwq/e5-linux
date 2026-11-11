@@ -120,18 +120,34 @@ part_update_pending() {
     echo '4/5 restoring settings and device firmware' > /run/part-status
     mkdir -p /part-update-new
     mount -t ext4 "$dev" /part-update-new || { part_fail 'new root mount'; return 1; }
-    local new=/part-update-new name
-    mkdir -p "$ram/new-version" "$ram/new-phone"
-    for name in image-version image-form build-time build.json feature-port.json device-profile; do
-        [ ! -f "$new/etc/e5/$name" ] || cp "$new/etc/e5/$name" "$ram/new-version/"
+    local new=/part-update-new name app
+    mkdir -p "$ram/new-version" "$ram/new-screen-apps" || return 1
+    for name in image-version image-form build-time release.json build.json feature-port.json device-profile; do
+        [ ! -f "$new/etc/e5/$name" ] || cp "$new/etc/e5/$name" "$ram/new-version/" || return 1
     done
-    cp -a "$new/etc/e5-infoscreen/plugins/phone/." "$ram/new-phone/" || return 1
+    # /etc/e5-infoscreen also contains user apps and wallpaper. Keep those,
+    # while retaining the new image's integrated app code across restoration.
+    for app in phone esim; do
+        if [ -d "$new/etc/e5-infoscreen/plugins/$app" ]; then
+            mkdir -p "$ram/new-screen-apps/$app" || return 1
+            cp -a "$new/etc/e5-infoscreen/plugins/$app/." "$ram/new-screen-apps/$app/" || return 1
+        fi
+    done
     tar -xf firmware.tar -C "$new" && tar -xf settings.tar -C "$new" || { part_fail 'restore archives'; return 1; }
     if [ -f "$ram/nv.tar" ]; then
         nv_restore_offline "$new" "$ram/nv.tar" || { part_fail 'NV restore/readback failed'; return 1; }
     fi
-    cp -a "$ram/new-phone/." "$new/etc/e5-infoscreen/plugins/phone/"
-    cp "$ram/new-version/"* "$new/etc/e5/"
+    for app in phone esim; do
+        if [ -d "$ram/new-screen-apps/$app" ]; then
+            rm -rf "$new/etc/e5-infoscreen/plugins/$app" || return 1
+            mkdir -p "$new/etc/e5-infoscreen/plugins/$app" || return 1
+            cp -a "$ram/new-screen-apps/$app/." "$new/etc/e5-infoscreen/plugins/$app/" || return 1
+        fi
+    done
+    for name in image-version image-form build-time release.json build.json feature-port.json device-profile; do
+        rm -f "$new/etc/e5/$name" || return 1
+        [ ! -f "$ram/new-version/$name" ] || cp "$ram/new-version/$name" "$new/etc/e5/" || return 1
+    done
     if [ "$KIND" = part ]; then
         rm -f "$new/etc/e5/sd-root" "$new/etc/e5/sd-trial"
         printf 'e5root /dev/%s\n' "$disk" > "$new/etc/e5/part-root"
