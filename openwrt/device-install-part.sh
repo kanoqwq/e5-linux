@@ -175,12 +175,15 @@ trap 'umount "$N" 2>/dev/null; losetup -d "$lo" 2>/dev/null' EXIT
 
 # BEGIN keep-config (device-install-image.sh)
 keep_config() {
-    local from=$1 O=$2 f p phone
+    local from=$1 O=$2 f p app screen_apps
     echo "== keeping the configuration of $from"
-    phone=$(mktemp -d /tmp/e5-part.phone.XXXXXX)
-    if [ -f "$O/etc/e5-infoscreen/plugins/phone/manifest.json" ]; then
-        cp -a "$O/etc/e5-infoscreen/plugins/phone/." "$phone/"
-    fi
+    screen_apps=$(mktemp -d /tmp/e5-part.screen.XXXXXX)
+    for app in phone esim; do
+        if [ -f "$O/etc/e5-infoscreen/plugins/$app/manifest.json" ]; then
+            mkdir -p "$screen_apps/$app"
+            cp -a "$O/etc/e5-infoscreen/plugins/$app/." "$screen_apps/$app/"
+        fi
+    done
     for f in image-version image-form build-time release.json; do
         cp "$O/etc/e5/$f" "/tmp/e5-part.$f" 2>/dev/null || rm -f "/tmp/e5-part.$f"
     done
@@ -198,11 +201,14 @@ keep_config() {
         rm -f "$O/etc/e5/$f"
         [ -f "/tmp/e5-part.$f" ] && mv "/tmp/e5-part.$f" "$O/etc/e5/$f"
     done
-    if [ -f "$phone/manifest.json" ]; then
-        mkdir -p "$O/etc/e5-infoscreen/plugins/phone"
-        cp -a "$phone/." "$O/etc/e5-infoscreen/plugins/phone/"
-    fi
-    rm -rf "$phone"
+    for app in phone esim; do
+        if [ -f "$screen_apps/$app/manifest.json" ]; then
+            rm -rf "$O/etc/e5-infoscreen/plugins/$app"
+            mkdir -p "$O/etc/e5-infoscreen/plugins/$app"
+            cp -a "$screen_apps/$app/." "$O/etc/e5-infoscreen/plugins/$app/"
+        fi
+    done
+    rm -rf "$screen_apps"
 }
 # END keep-config
 

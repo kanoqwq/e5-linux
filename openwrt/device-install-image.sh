@@ -60,14 +60,17 @@ umask "$update_umask"
 # passwords, SSH keys, /etc/e5, the traffic records, the info screen's apps),
 # the new image's own version files kept.
 keep_config() {
-    local from=$1 N=$2 f p phone
+    local from=$1 N=$2 f p app screen_apps
     echo "== keeping the configuration of $from"
-    # Keep installed apps and their data, but retain this image's bundled phone
-    # code. Otherwise an update silently restores the previous voice fixes/UI.
-    phone=$(mktemp -d /tmp/e5-img.phone.XXXXXX)
-    if [ -f "$N/etc/e5-infoscreen/plugins/phone/manifest.json" ]; then
-        cp -a "$N/etc/e5-infoscreen/plugins/phone/." "$phone/"
-    fi
+    # Preserve user apps and data, but keep the image's integrated screen apps
+    # from the new root. Otherwise old /etc/e5-infoscreen files overwrite them.
+    screen_apps=$(mktemp -d /tmp/e5-img.screen.XXXXXX)
+    for app in phone esim; do
+        if [ -f "$N/etc/e5-infoscreen/plugins/$app/manifest.json" ]; then
+            mkdir -p "$screen_apps/$app"
+            cp -a "$N/etc/e5-infoscreen/plugins/$app/." "$screen_apps/$app/"
+        fi
+    done
     for f in image-version image-form build-time release.json; do
         cp "$N/etc/e5/$f" "/tmp/e5-img.$f" 2>/dev/null || rm -f "/tmp/e5-img.$f"
     done
@@ -86,11 +89,14 @@ keep_config() {
         rm -f "$N/etc/e5/$f"
         [ -f "/tmp/e5-img.$f" ] && mv "/tmp/e5-img.$f" "$N/etc/e5/$f"
     done
-    if [ -f "$phone/manifest.json" ]; then
-        mkdir -p "$N/etc/e5-infoscreen/plugins/phone"
-        cp -a "$phone/." "$N/etc/e5-infoscreen/plugins/phone/"
-    fi
-    rm -rf "$phone"
+    for app in phone esim; do
+        if [ -f "$screen_apps/$app/manifest.json" ]; then
+            rm -rf "$N/etc/e5-infoscreen/plugins/$app"
+            mkdir -p "$N/etc/e5-infoscreen/plugins/$app"
+            cp -a "$screen_apps/$app/." "$N/etc/e5-infoscreen/plugins/$app/"
+        fi
+    done
+    rm -rf "$screen_apps"
     rm -f "$N/etc/e5/nv-update-original"
     if [ -e "$from/opt/e5/nv" ] || [ -L "$from/opt/e5/nv" ] || [ "${E5_NV_POLICY:-preserve}" = original ]; then
         local nvarchive nv_policy=${E5_NV_POLICY:-preserve}
