@@ -30,11 +30,16 @@ MIN_ID = 1000000000  # separate from ModemManager object IDs; stable across rest
 running = True
 
 
+class SimAbsent(RuntimeError):
+    """An explicitly selected slot confirmed that no SIM is inserted."""
+
+
 def execute(argv, timeout=12):
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         # Do not include arbitrary AT responses/PDU data in a diagnostic error.
-        match = re.search(r'\+CM[ES] ERROR:\s*\d+', result.stdout + result.stderr)
+        match = re.search(r'\+CM[ES] ERROR:\s*(?:\d+|SIM not inserted)(?=\s*(?:\r?\n|$))',
+                          result.stdout + result.stderr, re.IGNORECASE)
         raise RuntimeError(match[0] if match else f'{Path(argv[0]).name} failed (exit {result.returncode})')
     return result.stdout
 
@@ -181,15 +186,28 @@ def ingest(data, card, identity, messages, now):
         all(p.get('pdu') for p in m['parts']) and not m.get('deleted'))]
     if baseline:
         data['initialized'].append(scope)
-    data['slots'][str(card)] = {'identity': identity, 'ok': True, 'updated': now, 'error': None}
+    data['slots'][str(card)] = {'identity': identity, 'ok': True, 'present': True, 'updated': now, 'error': None}
     return alerts, forwards
 
 
 def read_card(card, own):
-    ccid = at(card, 'CCID?')
-    match = re.search(r'\+CCID:\s*"?([0-9A-Fa-f]{10,24})', ccid)
-    if not match:
-        raise RuntimeError('SIM identity unavailable')
+    try:
+        ccid = at(card, 'CCID?')
+        match = re.search(r'\+CCID:\s*"?([0-9A-Fa-f]{10,24})', ccid)
+        if not match:
+            raise RuntimeError('SIM identity unavailable')
+    except RuntimeError:
+        # Identity/storage failures alone do not prove absence. Use the same
+        # scoped CPIN result as the existing SIM status reader, only on this
+        # failure path; healthy scans need no extra command or new polling.
+        try:
+            pin = at(card, 'CPIN?')
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+            pin = str(error)
+        if re.search(r'^\s*\+(?:CME ERROR:\s*(?:10|SIM not inserted)|CPIN:\s*(?:SIM )?NOT INSERTED)\s*$',
+                     pin, re.MULTILINE | re.IGNORECASE):
+            raise SimAbsent('SIM not inserted') from None
+        raise
     identity = hashlib.sha256(match[1].upper().encode()).hexdigest()
     # Either slot can inherit disabled/direct routing after a modem restart.
     # NR0 carries both slots' hints; only this scoped storage query proves the
@@ -290,6 +308,12 @@ def scan_locked(cards):
                         archive_capacity(data, card, identity)
                     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
                         data['slots'][str(card)]['archive_error'] = str(error)
+                except SimAbsent:
+                    # An empty slot is a valid state on single-card devices
+                    # and partially populated dual-card devices. Do not erase
+                    # its inbox, identity baselines or the other slot's result.
+                    data['slots'][str(card)] = {'ok': True, 'present': False,
+                                               'updated': int(time.time()), 'error': None}
                 except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
                     data['slots'][str(card)] = {'ok': False, 'updated': int(time.time()), 'error': str(error)}
         finally:

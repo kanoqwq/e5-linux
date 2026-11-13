@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import hashlib
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -115,6 +116,86 @@ class Inbox(unittest.TestCase):
                     path.write_text('2 0 SM 7\n')
                     self.assertEqual(events.wait(0),{0,1})
             finally:events.close()
+
+    def test_empty_slot_requires_explicit_scoped_cpin_confirmation(self):
+        replies = ['+CME ERROR: 10', '+CME ERROR: SIM not inserted',
+                   '+CPIN: NOT INSERTED\nOK', '+CPIN: SIM NOT INSERTED\nOK']
+        for card in (0, 1):
+            for pin in replies:
+                for rejected in (False, True):
+                    calls = []
+                    def at(slot, command):
+                        calls.append((slot, command))
+                        if command == 'CCID?':
+                            if rejected: raise RuntimeError('+CME ERROR: 10')
+                            return 'ERROR'
+                        return pin
+                    with patch.object(receiver, 'at', side_effect=at):
+                        with self.assertRaises(receiver.SimAbsent):
+                            receiver.read_card(card, 1-card)
+                    self.assertEqual(calls, [(card, 'CCID?'), (card, 'CPIN?')])
+
+    def test_failed_identity_is_not_absence_when_cpin_is_unknown_locked_or_busy(self):
+        for pin in ['+CPIN: READY\nOK', '+CPIN: SIM PIN\nOK', '+CME ERROR: 13',
+                    '+CME ERROR: 14', '+CME ERROR: 100', 'ERROR', '']:
+            with patch.object(receiver, 'at', side_effect=['ERROR', pin]):
+                with self.assertRaisesRegex(RuntimeError, '^SIM identity unavailable$'):
+                    receiver.read_card(1, 0)
+        with patch.object(receiver, 'at', side_effect=[RuntimeError('AT busy'),
+                                                     receiver.subprocess.TimeoutExpired('at', 5)]):
+            with self.assertRaisesRegex(RuntimeError, '^AT busy$'):
+                receiver.read_card(1, 0)
+
+    def test_empty_either_slot_keeps_other_inbox_notifications_and_reinsertion(self):
+        identity = hashlib.sha256(b'89860012345678901234').hexdigest()
+        for missing in (0, 1):
+            own = 1-missing
+            data = self.fresh()
+            for card in (0, 1):
+                receiver.ingest(data, card, identity, [], 1)
+            receiver.ingest(data, missing, identity, sms_pdu.assemble([incoming('saved empty-slot SMS')]), 2)
+            previous = [m.copy() for m in data['messages']]
+            absent = {missing}
+            commands = []
+            def at(card, command):
+                commands.append((card, command))
+                if card in absent and command in ('CCID?', 'CPIN?'):
+                    raise RuntimeError('+CME ERROR: 10')
+                if command == 'CCID?': return '+CCID: 89860012345678901234\nOK'
+                if command == 'CNMI?': return '+CNMI: 2,1,0,0,0\nOK'
+                if command == 'CMGF?': return '+CMGF: 0\nOK'
+                if command == 'CMGL=4': return '+CMGL: 2,0,,10\n'+ucs2('live SMS')+'\nOK'
+                return 'OK'
+            with patch.object(receiver, 'load', return_value=data), patch.object(receiver, 'save'), \
+                 patch.object(receiver, 'execute', return_value='No calls were found'), \
+                 patch.object(receiver, 'current_card', return_value=own), \
+                 patch.object(receiver, 'at', side_effect=at), patch.object(receiver, 'archive_capacity'), \
+                 patch.object(receiver, 'alert') as alert, patch.object(receiver, 'forward') as forward:
+                receiver.scan_locked({0, 1})
+                self.assertTrue(data['slots'][str(missing)]['ok'])
+                self.assertFalse(data['slots'][str(missing)]['present'])
+                self.assertIsNone(data['slots'][str(missing)]['error'])
+                self.assertTrue(data['slots'][str(own)]['present'])
+                self.assertEqual(data['messages'][:1], previous)
+                new = [m['id'] for m in data['messages'] if m['card'] == own]
+                self.assertEqual(len(new), 1)
+                self.assertEqual(alert.call_args.args[0], new)
+                forward.assert_called_with(new)
+                self.assertEqual(commands[-1], (own, 'CFUN?'))
+                receiver.scan_locked({0, 1})
+                forward.assert_called_with([])
+                absent.clear()
+                receiver.scan_locked({0, 1})
+                self.assertTrue(data['slots'][str(missing)]['present'])
+                self.assertEqual(len([m for m in data['messages'] if m['card'] == missing]), 2)
+                self.assertEqual(data['messages'][0], previous[0])
+
+    def test_numeric_and_text_absence_are_safe_errors_not_pdu_dumps(self):
+        for text in ['+CME ERROR: 10', '+CME ERROR: SIM not inserted']:
+            result = receiver.subprocess.CompletedProcess(['e5-at'], 1, text+'\n', '')
+            with patch.object(receiver.subprocess, 'run', return_value=result):
+                with self.assertRaisesRegex(RuntimeError, '^'+re.escape(text)+'$'):
+                    receiver.execute(['e5-at'])
 
     def fresh(self):
         return {'version':1,'next_id':receiver.MIN_ID,'initialized':[],'messages':[],'slots':{}}

@@ -193,6 +193,7 @@ return view.extend({
 		Object.keys(r && r.slots || {}).forEach(function(card) {
 			var state = r.slots[card];
 			if (!state.ok) nodes.push(E('p', { 'class': 'e5-sms-error' }, safeText('SIM' + (+card + 1) + '：' + state.error)));
+			else if (state.present === false) nodes.push(E('p', { 'class': 'e5-sms-hint' }, safeText('SIM' + (+card + 1) + '：未插卡')));
 		});
 		if (!msgs.length) nodes.push(E('p', { 'class': 'e5-sms-hint' }, '这张卡暂无短信'));
 		return E('div', { 'class': 'e5-sms-inbox' }, nodes.concat(msgs.map(L.bind(function(m) {
