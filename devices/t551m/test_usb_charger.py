@@ -113,6 +113,11 @@ static int regmap_update_bits(void *map,u32 reg,u32 mask,u32 value) {
 }
 struct variant { u32 event_mask, state_mask, int_clr, mode; };
 struct sc27xx_typec { void *dev, *regmap, *edev; u32 base, state; struct variant *var_data; bool partner_connected,role_irq_requested,external_host_policy; int irq,mode,role_lock,role_phase;struct delayed_work role_work; };
+/* VBUS-only worker/cleanup has its own real C tests in test_musb_host_sink.py.
+ * This fixture isolates the existing IRQ, CC policy and BC1.2 ordering. */
+static void sc27xx_external_vbus_queue(struct sc27xx_typec *sc) {(void)sc;}
+static void sc27xx_external_vbus_clear(struct sc27xx_typec *sc) {(void)sc;}
+static void sc27xx_external_vbus_cleanup(struct sc27xx_typec *sc) {(void)sc;}
 static int sc27xx_typec_connect_state, acknowledged, events, read_error;
 static char calls[100];
 static void call(char value) { size_t n=strlen(calls); calls[n]=value; calls[n+1]=0; }

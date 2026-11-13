@@ -140,6 +140,7 @@ class Policy(unittest.TestCase):
         source=Path(os.environ['E5_TEST_KERNEL'])
         usb=runpy.run_path(str(HERE / 'usb-role.py'))['apply']
         policy=runpy.run_path(str(HERE / 'typec-policy.py'))['apply']
+        external=runpy.run_path(str(HERE.parent/'common/dwc3-host-policy.py'))['apply']
         names=('drivers/usb/typec/sc27xx_typec.c','drivers/usb/dwc3/dwc3-of-simple.c',
                'drivers/usb/phy/phy-sprd-ums9620-ssphy.c','drivers/usb/phy/sprd-bc1p2.c',
                'include/linux/power/sprd-bc1p2.h')
@@ -147,13 +148,15 @@ class Policy(unittest.TestCase):
             root=Path(folder)
             for name in names:
                 p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes((source/name).read_bytes())
-            usb(root);policy(root)
+            usb(root);policy(root);external(root)
             first={n:(root/n).read_bytes() for n in names}
-            usb(root);policy(root)
+            usb(root);policy(root);external(root)
             self.assertEqual(first,{n:(root/n).read_bytes() for n in names})
             text=(root/names[0]).read_text()
             self.assertEqual(text.count('mutex_init(&sc->policy_lock);'),1)
             self.assertEqual(text.count('if (!sc27xx_policy_accepts(sc, sc->state))'),1)
+            self.assertEqual(text.count('INIT_DELAYED_WORK(&sc->external_vbus_work'),1)
+            self.assertEqual(text.count('devm_add_action_or_reset(&pdev->dev, sc27xx_external_vbus_cleanup'),1)
 
 
 if __name__ == '__main__':

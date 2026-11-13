@@ -14,6 +14,21 @@ def apply(kernel):
         text = path.read_text()
         if new in text:
             return
+        if name == 'drivers/usb/phy/phy-sprd-ums9620-ssphy.c':
+            # The later common host-sink adapter wraps this exact detection
+            # stop and notifier guard. Accept that composed result on replay;
+            # do not overwrite its external-power exception with the base step.
+            stop = ('\t\tsprd_usb_changed(&phy->bc1p2_info, USB_CHARGER_ABSENT);\n'
+                    '\t\tkthread_flush_work(&phy->bc1p2_info.usb_change_kwork.work);\n'
+                    '\t\tkthread_flush_work(&phy->bc1p2_info.bc1p2_kwork.work);\n'
+                    '\t\tflush_work(&phy->charger_work);')
+            guarded = '\t\tif (!READ_ONCE(phy->external_host)) {\n' + ''.join(
+                '\t'+line+'\n' for line in stop.splitlines()) + '\t\t}'
+            composed = new.replace(stop, guarded).replace(
+                '\tif (phy->is_host)\n\t\treturn NOTIFY_OK;',
+                '\tif (phy->is_host && !READ_ONCE(phy->external_host))\n\t\treturn NOTIFY_OK;')
+            if composed != new and composed in text:
+                return
         if text.count(old) != 1:
             raise ValueError('M8 USB role anchor: ' + name + ': ' + old[:80])
         path.write_text(text.replace(old, new))

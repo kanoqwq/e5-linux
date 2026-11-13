@@ -22,6 +22,41 @@ def function(source, name):
 
 
 class HostSink(unittest.TestCase):
+    def test_vbus_only_preparation_idempotence_and_lifetime(self):
+        kernel = os.environ.get('E5_TEST_KERNEL')
+        if not kernel:
+            self.skipTest('Set E5_TEST_KERNEL to a prepared DWC3 source')
+        original = Path(kernel)/'drivers/usb/typec/sc27xx_typec.c'
+        is_41s = '#include "yh41s-usb-policy.h"' in original.read_text()
+        adapter = BOARD.parent/'yuanhang41s/usb-policy.py' if is_41s else BOARD/'dwc3-host-policy.py'
+        apply = runpy.run_path(str(adapter))['apply']
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root/'drivers/usb/typec/sc27xx_typec.c'
+            source.parent.mkdir(parents=True);source.write_bytes(original.read_bytes())
+            apply(root)
+            before = {p.name:p.read_bytes() for p in source.parent.iterdir()}
+            apply(root)
+            self.assertEqual(before,{p.name:p.read_bytes() for p in source.parent.iterdir()})
+            text = source.read_text()
+            self.assertLess(text.index('#include "sprd-host-sink-typec.h"'),
+                            text.index('static irqreturn_t sc27xx_typec_interrupt('))
+            # Cleanup must be registered after its extcon allocation and before
+            # exposing IRQ/notifiers; initialization precedes every cleanup.
+            self.assertLess(text.index('INIT_DELAYED_WORK(&sc->external_vbus_work'),
+                            text.index('devm_add_action_or_reset(&pdev->dev, sc27xx_external_vbus_cleanup'))
+            self.assertLess(text.index('devm_extcon_dev_register('),
+                            text.index('devm_add_action_or_reset(&pdev->dev, sc27xx_external_vbus_cleanup'))
+            self.assertLess(text.index('devm_add_action_or_reset(&pdev->dev, sc27xx_external_vbus_cleanup'),
+                            text.index('devm_extcon_register_notifier('))
+            remove = function(text,'sc27xx_typec_remove')
+            self.assertLess(remove.index('sc27xx_external_vbus_cleanup(sc)'),remove.index('sysfs_remove_groups('))
+            notify = function(text,'sc27xx_typec_get_vbus_notify')
+            self.assertLess(notify.index('sc27xx_external_vbus_queue(sc)'),notify.index('if (sc->partner_connected)'))
+            policy = source.parent/('yh41s-usb-policy.h' if is_41s else 'ums9620-typec-policy.h')
+            self.assertIn('sc27xx_external_vbus_clear(sc)',policy.read_text())
+            self.assertIn('sc27xx_external_vbus_queue(sc)',policy.read_text())
+
     @unittest.skipIf(os.name == 'nt', 'Linux C compiler required')
     def test_unknown_bc_completion_notifies_without_forging_charger_type(self):
         kernel = os.environ.get('E5_TEST_KERNEL')
@@ -285,6 +320,9 @@ int main(void){
 #define WRITE_ONCE(x,v) ((x)=(v))
 static int notifications;
 static void extcon_sync(void *dev,int cable){(void)dev;assert(cable==EXTCON_USB);notifications++;}
+/* The real VBUS worker runs separately under address/undefined sanitizers. */
+static void sc27xx_external_vbus_clear(struct sc27xx_typec *sc){(void)sc;}
+static void sc27xx_external_vbus_queue(struct sc27xx_typec *sc){(void)sc;}
 '''
         reset=module['MAIN'].split('int main(void)')[0]
         source=header.read_text()

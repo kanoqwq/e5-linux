@@ -40,6 +40,23 @@ def apply(kernel, *, charger):
           '#include <linux/module.h>\n#include <linux/of_platform.h>\n#include <linux/usb/sprd-host-sink.h>')
     patch(typec, 'struct mutex role_lock;',
           'struct mutex role_lock;\n\tbool external_host_policy, external_data_host;')
+    patch(typec, 'bool external_host_policy, external_data_host;',
+          'bool external_host_policy, external_data_host;\n'
+          '\tbool external_vbus_stopped;\n\tspinlock_t external_vbus_lock;\n'
+          '\tstruct delayed_work external_vbus_work;')
+    patch(typec, '#include "board-usb-role.h"',
+          '#include "sprd-host-sink-typec.h"\n#include "board-usb-role.h"')
+    patch(typec, '\tINIT_DELAYED_WORK(&sc->role_work, sc27xx_typec_role_work);',
+          '\tINIT_DELAYED_WORK(&sc->role_work, sc27xx_typec_role_work);\n'
+          '\tspin_lock_init(&sc->external_vbus_lock);\n'
+          '\tINIT_DELAYED_WORK(&sc->external_vbus_work, sc27xx_external_vbus_work);')
+    # The physical VBUS notifier must reach this fallback even when there is
+    # no CC IRQ at all (the failing powered adapter supplies only VBUS).
+    patch(typec, '\tdev_info(sc->dev, "vbus_connect_value:%d\\n", sc->vbus_connect_value);',
+          '\tsc27xx_external_vbus_queue(sc);\n'
+          '\tdev_info(sc->dev, "vbus_connect_value:%d\\n", sc->vbus_connect_value);')
+    patch(typec, 'unlock:\n\tmutex_unlock(&sc->role_lock);',
+          'unlock:\n\tsc27xx_external_vbus_queue(sc);\n\tmutex_unlock(&sc->role_lock);')
     patch(typec, '&dev_attr_usb_role.attr,',
           '&dev_attr_usb_role.attr,\n\t&dev_attr_usb_host_sink_supported.attr,')
 
@@ -50,9 +67,11 @@ def apply(kernel, *, charger):
     policy = policy.replace('if (old == mode) {\n\t\tret = 0;',
                             'if (old == mode) {\n\t\tWRITE_ONCE(sc->external_host_policy, external);\n\t\tret = 0;', 1)
     policy = policy.replace('out:\n\tmutex_unlock(&sc->role_lock);\n\treturn ret;',
-        'out:\n\tif (!ret)\n\t\tWRITE_ONCE(sc->external_host_policy, external);\n'
+        'out:\n\tif (!ret) {\n\t\tWRITE_ONCE(sc->external_host_policy, external);\n'
+        '\t\tif (!external)\n\t\t\tsc27xx_external_vbus_clear(sc);\n\t}\n'
         '\tmutex_unlock(&sc->role_lock);\n'
-        '\tif (!ret)\n\t\textcon_sync(sc->edev, EXTCON_USB);\n\treturn ret;', 1)
+        '\tif (!ret) {\n\t\tsc27xx_external_vbus_queue(sc);\n'
+        '\t\textcon_sync(sc->edev, EXTCON_USB);\n\t}\n\treturn ret;', 1)
     policy = policy.replace('\tmode = READ_ONCE(sc->mode);',
         '\tif (READ_ONCE(sc->external_host_policy))\n\t\treturn sysfs_emit(buf, "host-sink\\n");\n'
         '\tmode = READ_ONCE(sc->mode);', 1)
@@ -62,7 +81,8 @@ def apply(kernel, *, charger):
         '\t\texternal = true;\n\t} else\n\t\treturn -EINVAL;\n'
         '\tret = sc27xx_typec_set_policy(sc, mode, external);', 1)
     policy = policy.replace('\treturn sysfs_emit(buf, "%s\\n", extcon_get_state',
-        '\tif (READ_ONCE(sc->external_data_host) && sc->partner_connected)\n'
+        '\tif (READ_ONCE(sc->external_data_host) &&\n'
+        '\t    (sc->partner_connected || READ_ONCE(sc->vbus_only_connect)))\n'
         '\t\treturn sysfs_emit(buf, "host\\n");\n'
         '\treturn sysfs_emit(buf, "%s\\n", extcon_get_state', 1)
     policy += '''
@@ -303,6 +323,13 @@ EXPORT_SYMBOL_GPL(sprd_hsphy_external_power);
     for path, source in edits.items():
         path.write_text(source)
     (kernel / 'drivers/usb/typec/board-usb-policy.h').write_text(policy)
+    role = (HERE.parent / 't551m/usb-role.h').read_text()
+    role = role.replace('\tcancel_delayed_work_sync(&sc->role_work);',
+                        '\tsc27xx_external_vbus_cleanup(sc);\n'
+                        '\tcancel_delayed_work_sync(&sc->role_work);', 1)
+    (kernel / 'drivers/usb/typec/board-usb-role.h').write_text(role)
+    (kernel / 'drivers/usb/typec/sprd-host-sink-typec.h').write_bytes(
+        (HERE / 'host-sink-typec.h').read_bytes())
     (kernel / 'drivers/usb/musb/sprd-musb-host-sink.h').write_bytes((HERE / 'musb-host-sink.h').read_bytes())
     (kernel / 'include/linux/usb/sprd-host-sink.h').write_bytes((HERE / 'host-sink-api.h').read_bytes())
 

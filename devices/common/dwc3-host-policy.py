@@ -1,5 +1,6 @@
 """Extend the legacy UMP9620 CC policy with manual external-power host data."""
 from pathlib import Path
+import runpy
 
 HERE = Path(__file__).resolve().parent
 
@@ -16,8 +17,10 @@ def apply(kernel):
             raise ValueError('DWC3 CC policy anchor: ' + old[:70])
         source = source.replace(old, new, 1)
 
-    include = '#include <linux/of_platform.h>\n#include <linux/usb/role.h>\n#include <linux/usb/sprd-dwc3-host-sink.h>'
-    edit('#include <linux/module.h>', '#include <linux/module.h>\n'+include)
+    for include in ('#include <linux/of_platform.h>', '#include <linux/usb/role.h>',
+                    '#include <linux/usb/sprd-dwc3-host-sink.h>'):
+        if include not in source:
+            edit('#include <linux/module.h>', '#include <linux/module.h>\n'+include)
     edit('struct mutex policy_lock;', 'struct mutex policy_lock;\n\tbool external_host_policy;')
     edit('&dev_attr_usb_role.attr,', '&dev_attr_usb_role.attr,\n\t&dev_attr_usb_host_sink_supported.attr,')
     policy = (HERE.parent / 'm8/typec-policy.h').read_text()
@@ -45,3 +48,6 @@ static DEVICE_ATTR_RO(usb_host_sink_supported);
     policy += (HERE / 'dwc3-typec-api.h').read_text()
     path.write_text(source)
     (path.parent / 'ums9620-typec-policy.h').write_text(policy)
+    runpy.run_path(str(HERE/'dwc3-typec-vbus.py'))['apply'](
+        kernel, lock='policy_lock', policy='external_host_policy',
+        policy_header='ums9620-typec-policy.h', irq_label='handled')

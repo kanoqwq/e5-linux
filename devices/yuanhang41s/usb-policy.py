@@ -4,6 +4,7 @@ Keep automatic DRP behavior and the DWC3 real-attachment/boost ordering. No
 synthetic host event, always-on boost or extra automatic sink timer is added.
 """
 from pathlib import Path
+import runpy
 
 
 def apply(kernel):
@@ -59,6 +60,9 @@ def apply(kernel):
         source = source[:start]+irq+source[end:]
     path.write_text(source)
     (path.parent/'yh41s-usb-policy.h').write_bytes(Path(__file__).with_name('usb-policy.h').read_bytes())
+    runpy.run_path(str(Path(__file__).resolve().parents[1]/'common/dwc3-typec-vbus.py'))['apply'](
+        kernel, lock='role_lock', policy='host_sink',
+        policy_header='yh41s-usb-policy.h', irq_label='yh41s_policy_unlock')
 
 
 if __name__ == '__main__':

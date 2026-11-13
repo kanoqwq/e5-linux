@@ -14,7 +14,8 @@ def apply(kernel):
             raise ValueError('UMS9620 Type-C policy anchor: ' + old[:70])
         text = text.replace(old, new, 1)
 
-    edit('#include <linux/module.h>', '#include <linux/module.h>\n#include <linux/mutex.h>')
+    if '#include <linux/mutex.h>' not in text:
+        edit('#include <linux/module.h>', '#include <linux/module.h>\n#include <linux/mutex.h>')
     edit('struct sc27xx_typec {', 'struct sc27xx_typec {\n\tstruct mutex policy_lock;')
     edit('\tsc->edev = devm_extcon_dev_allocate(',
          '\tmutex_init(&sc->policy_lock);\n\tsc->edev = devm_extcon_dev_allocate(')
