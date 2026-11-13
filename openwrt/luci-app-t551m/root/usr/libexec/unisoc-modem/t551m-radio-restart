@@ -59,8 +59,12 @@ if [ -n "$selected" ]; then
                 *) echo 'Cannot read standby radio state' >&2; exit 1;;
             esac
         fi
-        "$at" -t 15 'AT+CFUN=4' | grep -q '^OK'
-        "$at" -t 15 'AT+CFUN=1' | grep -q '^OK'
+        failed=0
+        "$at" -t 15 'AT+CFUN=4' | grep -q '^OK' || failed=1
+        # A timed-out stop can already have taken effect. Always attempt the
+        # matching restore through the same scoped owner before returning.
+        "$at" -t 15 'AT+CFUN=1' | grep -q '^OK' || failed=1
+        [ "$failed" = 0 ]
         exit 0
     fi
 fi
@@ -84,5 +88,7 @@ case "$autostart" in
     *) echo 'Cannot read data autostart before reconnect' >&2; exit 1;;
 esac
 ifdown "$iface"
-mmcli -m any --timeout=30 --disable
-mmcli -m any --timeout=30 --enable
+failed=0
+mmcli -m any --timeout=30 --disable || failed=1
+mmcli -m any --timeout=30 --enable || failed=1
+[ "$failed" = 0 ]

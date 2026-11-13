@@ -85,6 +85,7 @@ echo OK''')
                 result, trace = self.run_helper('--settings')
                 self.assertNotEqual(result.returncode,0)
                 self.assertIn('ifdown wan',trace)
+                self.assertIn('--enable',trace)
                 self.assertEqual(trace.splitlines()[-1],'ifup wan')
                 self.env.pop(failure)
 
@@ -106,6 +107,13 @@ echo OK''')
         self.assertLess(trace.index('AT+CFUN=4'),trace.index('AT+CFUN=1'))
         self.assertNotIn('mmcli',trace)
         self.assertNotIn('ifdown',trace)
+
+    def test_standby_failed_stop_still_attempts_restore(self):
+        self.env.update(MU300_SIM_SLOT='1', FAIL_AT='AT+CFUN=4')
+        result, trace = self.run_helper('--settings')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AT+CFUN=1', trace)
+        self.assertNotIn('ifdown', trace)
 
     def test_explicit_manual_restart_keeps_existing_behavior(self):
         self.env['STATE'] = 'failed'
