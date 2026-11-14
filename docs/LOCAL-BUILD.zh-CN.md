@@ -112,6 +112,8 @@ K1 和远航41S 已有独立的原生源码／对象缓存，登记在 `tools/bu
 `sources/e5-kernel`＋`objects/e5-family`；后者的名字虽然含 e5-family，
 现有 `.config` 和 release 必须是远航41S，不能当其他机型的共享对象目录。
 两者的完整平台基线均为已验证的 `kernels/m8/config`，输出仍取各 profile 的 kernel 路径。
+远航41S 的交付件登记在工作区 `kernels/yuanhang41s`，必须使用区分大小写的 Linux
+文件系统；Windows 默认目录会将 `xt_RATEEST.ko` 与 `xt_rateest.ko` 相互覆盖。
 通过 `build-release.py run` 调用各自的 `devices/<profile>/build-kernel.py`，
 显式传入登记的 `--kernel`、`--build`、`--base-config`、`--out`；不建立新源码副本。
 远航41S 构建会重放自己的准备流程，之后使用 overlay 视图前需按下述规则核对底层指纹。

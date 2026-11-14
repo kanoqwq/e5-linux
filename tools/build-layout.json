@@ -57,7 +57,7 @@
       "misc_head": "{repo}/dumps/t512n-stock-20261018/misc-head.bin"
     },
     "yuanhang41s": {
-      "kernel": "{repo}/out/yuanhang41s/kernel",
+      "kernel": "{workspace}/kernels/yuanhang41s",
       "stock_boot": "{repo}/dumps/yuanhang41s-stock-20261020/boot_b.img",
       "misc_head": "{repo}/dumps/yuanhang41s-stock-20261020/misc-head.bin"
     },
