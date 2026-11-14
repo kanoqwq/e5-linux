@@ -12,11 +12,11 @@ function attach(root) {
 	M.localize(root);
 	var select = root.querySelector('select'), button = root.querySelector('button');
 	var currentLine = root.querySelector('[data-current]'), result = root.querySelector('[data-result]');
-	var current = null, pending = false, disposed = false, timer, expires = 0;
+	var current = null, saved = null, pending = false, disposed = false, timer, expires = 0;
 	var storageKey = 'modem-data-sim-job';
 	function controls() {
 		select.disabled = pending || current == null;
-		button.disabled = pending || current == null || select.value === current;
+		button.disabled = pending || current == null || (select.value === current && select.value === saved);
 	}
 	function message(text, error) {
 		result.textContent = text;
@@ -45,7 +45,7 @@ function attach(root) {
 		});
 	}
 	button.onclick = function() {
-		if (pending || current == null || select.value === current) return;
+		if (pending || current == null || (select.value === current && select.value === saved)) return;
 		var target = select.value, previous = current;
 		pending = true; controls();
 		M.confirmBox(M.translate('切换上网卡') + ' → SIM ' + (Number(target) + 1),
@@ -70,6 +70,7 @@ function attach(root) {
 		var next = value === 0 || value === 1 ? String(value) : null;
 		if (current == null || select.value === current) select.value = next || '0';
 		current = next;
+		saved = modem && [0,1].includes(modem.saved_sim) ? String(modem.saved_sim) : null;
 		currentLine.textContent = M.translate('当前上网卡') + '：' + (current == null ? '--' : 'SIM ' + (Number(current) + 1)) +
 			' · ' + M.translate(modem && modem.data_up ? '已连接' : '未连接') +
 			' · ' + M.translate('开机使用') + '：' + (modem && [0,1].includes(modem.saved_sim) ? 'SIM ' + (modem.saved_sim + 1) : '--');

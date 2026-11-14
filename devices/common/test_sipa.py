@@ -6,6 +6,7 @@ No device access, modem commands or kernel loading.
 """
 from pathlib import Path
 import runpy
+import os
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,8 @@ PRELUDE = r'''
 #define pr_err_ratelimited(...) ((void)0)
 #define dev_warn_ratelimited(...) ((void)0)
 #define dev_err_ratelimited(...) ((void)0)
+#define READ_ONCE(x) (x)
+#define WRITE_ONCE(x,v) ((x)=(v))
 typedef uint16_t u16;
 typedef uint32_t u32;
 static int held;
@@ -201,6 +204,8 @@ int main(void) {
  advanced=freed=0;sender.left_cnt=0;null_at=1;nodes[0].match=1;sipa_free_sent_items();
  assert(advanced==1 && freed==1 && sender.left_cnt==1);
  count=0;advanced=freed=0;sipa_free_sent_items();assert(!advanced && !freed);
+ sender.left_cnt=8;sender.free_notify_net=true;int before_notify=notified;
+ sipa_free_sent_items();assert(notified==before_notify+1 && !sender.free_notify_net);
  count=1;null_at=-1;nodes[0].match=1;
  for(unsigned error=1;error<16;error++){
   nodes[0].err_code=error;sipa_free_sent_items();
@@ -299,13 +304,16 @@ def main():
         assert before == {name:(root/name).read_bytes() for name in paths}, 'Old patched tree upgrade differs'
         sources = {Path(name).name:(root/name).read_text() for name in paths}
         runpy.run_path(str(HERE/'test_sipa_flow.py'))['run'](root/'drivers/unisoc_platform/net/sipa_v3')
+        subprocess.run(['python3', str(HERE/'test_sipa_buffers.py')],
+                       env=dict(os.environ, E5_TEST_KERNEL=str(root)), check=True)
         cp = sources['sipa_dele_cp_in_ap.c']
         assert cp.index('mutex_init(') < cp.index('ret = sipa_delegator_start(') < cp.index('wake_up_process(')
         assert 'wake_up_process(' not in sources['sipa_dele_cmn.c']
         for name, stubs, body, tail in [
             ('power', POWER_STUBS, function(cp,'cp_dele_on_commad'), POWER_MAIN),
             ('backpressure', TX_STUBS, function(sources['sipa_eth.c'],'sipa_eth_start_xmit'), TX_MAIN),
-            ('completion', COMPLETION_STUBS, function(sources['sipa_skb_send.c'],'sipa_free_sent_items'), COMPLETION_MAIN),
+            ('completion', COMPLETION_STUBS, '\n'.join(function(sources['sipa_skb_send.c'],name) for name in (
+                'sipa_sender_can_notify','sipa_free_sent_items')), COMPLETION_MAIN),
             ('events', EVENT_STUBS, function(sources['sipa_skb_send.c'],'sipa_sender_notify_cb'), EVENT_MAIN),
             ('handshake', HANDSHAKE_STUBS, '\n'.join(function(sources['sipa_dele_cmn.c'],name) for name in (
                 'sipa_dele_local_rls_r_prod','sipa_dele_local_req_r_prod','sipa_dele_on_done')), HANDSHAKE_MAIN),

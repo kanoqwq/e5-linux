@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as uloop from 'uloop';
 import * as ubus from 'ubus';
 import * as core from './traffic-core.uc';
+import * as csv from './traffic-csv.uc';
 
 const BASE = getenv('MU300_TRAFFIC_DIR') || '/etc/unisoc-modem/traffic';
 const RUN = getenv('MU300_TRAFFIC_RUN') || '/run/unisoc-modem-traffic';
@@ -17,12 +18,14 @@ function read_json(path) {
     if (text == null) return null;
     try { return json(text); } catch (e) { die('Invalid traffic database: ' + path + '\n'); }
 }
-function atomic(path, value) {
-    let text = sprintf('%J\n', value), tmp = path + '.new';
+function atomic_text(path, text) {
+    let tmp = path + '.new';
     if (fs.writefile(tmp, text) != length(text)) return false;
     fs.chmod(tmp, 384);
     return fs.rename(tmp, path);
 }
+function atomic(path, value) { return atomic_text(path, sprintf('%J\n',value)); }
+
 function active_slot() { return trim(fs.readfile(CARD) || '') == '1' ? 1 : 0; }
 let cached = read_json(RUN + '/state.json'), durable = read_json(BASE + '/state.json');
 // A crash after committing a clear/config change but before refreshing RAM
@@ -106,7 +109,7 @@ function get_data(slot) {
         if (length(months) >= 12) break;
         push(months, { date: date, rx: db.months[date].rx, tx: db.months[date].tx });
     }
-    return { slot, config: db.config, status: view(time(), slot), days: days, months: months };
+    return { csv_backup: fs.stat(BASE + '/before-import-sim' + slot + '.csv') != null, slot, config: db.config, status: view(time(), slot), days: days, months: months };
 }
 function selected(req) {
     let slot = req.args?.slot;
@@ -168,6 +171,38 @@ const obj = bus.publish(BUS, {
         sample(true);
         return { ok: 1 };
     } },
+    export_csv: {args:{slot:'',backup:false},call:function(req) {
+        let slot=selected(req), now=time();
+        if (slot == null) return {ok:0,error:'invalid_slot'};
+        if (now < 1704067200) return {ok:0,error:'clock_unsynced'};
+        let text;
+        if (req.args.backup) text=fs.readfile(BASE + '/before-import-sim' + slot + '.csv');
+        else { sample(false); try { text=csv.encode(ledger.slots[slot],slot,now); }
+            catch(e) { return {ok:0,error:'csv_invalid'}; } }
+        return text == null ? {ok:0,error:'csv_backup_missing'} : {ok:1,slot,csv:text};
+    }},
+    import_csv: {args:{slot:'',csv:'',mode:'merge',confirm:false},call:function(req) {
+        let explicit=req.args?.slot;
+        if (explicit != '0' && explicit != '1') return {ok:0,error:'invalid_slot'};
+        let slot=int(explicit), now=time(), prepared, before;
+        try { prepared=csv.prepare(ledger.slots[slot],req.args.csv,req.args.mode,now); }
+        catch(e) { return {ok:0,error: e.message || 'csv_invalid'}; }
+        if (req.args.confirm !== true) return {ok:1,slot,preview:prepared.preview};
+        sample(false);
+        // Resample before preparing/backup, then commit one durable ledger.
+        try { prepared=csv.prepare(ledger.slots[slot],req.args.csv,req.args.mode,now);
+            before=csv.encode(ledger.slots[slot],slot,now); }
+        catch(e) { return {ok:0,error: e.message || 'csv_invalid'}; }
+        let next=json(sprintf('%J',ledger));
+        core.advance(prepared.db,ledger.slots[slot].available ? ledger.slots[slot].last : null,now);
+        next.slots[slot]=prepared.db; next.revision++;
+        if (!atomic_text(BASE + '/before-import-sim' + slot + '.csv',before) ||
+            !atomic(BASE + '/state.json',next)) {
+            storage_error=true; return {ok:0,error:'storage_failed'};
+        }
+        ledger=next; saved_at=now; storage_error=false; checkpoint(false);
+        return {ok:1,slot,data:get_data(slot)};
+    }},
     flush: { call: function(req) { sample(true); return { ok: !storage_error }; } }
 });
 if (!obj) die('Traffic service already running or publish failed\n');

@@ -13,7 +13,7 @@ source=Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix='dual-traffic-') as directory:
     root=Path(directory)
     for name in ['data','run','net']: (root/name).mkdir()
-    for name in ['traffic','traffic-core.uc']: shutil.copy(source/name,root/name)
+    for name in ['traffic','traffic-core.uc','traffic-csv.uc']: shutil.copy(source/name,root/name)
     card=root/'card';card.write_text('0')
     def counters(slot,rx,tx,cid=1):
         dev=root/'net'/('sipa_eth'+str(slot*8+cid-1))

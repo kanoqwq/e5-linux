@@ -7,6 +7,13 @@ from native_dashboard_fixture import Snapshot
 
 
 class SimPresence(unittest.TestCase):
+    def test_live_data_card_does_not_follow_stale_boot_preference(self):
+        with tempfile.TemporaryDirectory() as temp:
+            s=Snapshot(Path(temp))
+            s.write('etc/config/e5-sim', "config sim 'main'\n option card '0'\n")
+            s.write('sys/module/sipc_wwan/parameters/card', '1\n')
+            self.assertEqual(s.run()['modem']['data_sim'], 1)
+
     def test_info_exports_only_selected_slot_and_live_owner(self):
         with tempfile.TemporaryDirectory() as temp:
             s=Snapshot(Path(temp))

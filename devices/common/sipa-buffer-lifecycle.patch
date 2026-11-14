@@ -1,0 +1,143 @@
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c
+@@ -147,6 +147,13 @@
+ 	return false;
+ }
+ 
++static bool sipa_sender_can_notify(struct sipa_skb_sender *sender)
++{
++	return READ_ONCE(sender->free_notify_net) &&
++		atomic_read(&sender->left_cnt) >
++		sender->ep->send_fifo.rx_fifo.fifo_depth / 4;
++}
++
+ static void sipa_free_sent_items(void)
+ {
+ 	u32 i, num = 0, success_cnt = 0;
+@@ -163,7 +170,7 @@
+ 					   sender->ep->send_fifo.idx,
+ 					   NULL, &num);
+ 	if (!num)
+-		return;
++		goto notify;
+ 
+ 	sipa_hal_sync_node_from_tx_fifo(sender->dev,
+ 					sender->ep->send_fifo.idx, num);
+@@ -200,10 +207,10 @@
+ 	sipa_hal_add_tx_fifo_rptr(sender->dev,
+ 				  sender->ep->send_fifo.idx, i);
+ 	atomic_add(success_cnt, &sender->left_cnt);
+-	if (sender->free_notify_net &&
+-	    atomic_read(&sender->left_cnt) >
+-	    sender->ep->send_fifo.rx_fifo.fifo_depth / 4) {
+-		sender->free_notify_net = false;
++notify:
++	/* A completion can return capacity before the flow request arrives. */
++	if (sipa_sender_can_notify(sender)) {
++		WRITE_ONCE(sender->free_notify_net, false);
+ 		sipa_inform_evt_to_nics(sender, SIPA_LEAVE_FLOWCTRL);
+ 	}
+ }
+@@ -236,8 +243,9 @@
+ 	sched_setscheduler(current, SCHED_RR, &param);
+ 	while (!kthread_should_stop()) {
+ 		wait_event_interruptible(sender->free_waitq,
+-					 !sipa_sender_ck_unfree(sender) ||
+-					 sender->free_notify_net);
++					 !atomic_read(&sender->check_suspend) &&
++					 (!sipa_sender_ck_unfree(sender) ||
++					  sipa_sender_can_notify(sender)));
+ 		sipa_free_sent_items();
+ 	}
+ 	return 0;
+@@ -304,6 +312,7 @@
+ 		wake_up_process(sender->free_thread);
+ 		sender->init_flag = false;
+ 	}
++	wake_up(&sender->free_waitq);
+ 
+ 	return 0;
+ }
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_nic.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_nic.c
+@@ -717,7 +717,7 @@
+ 
+ 	switch (err) {
+ 	case -EAGAIN:
+-		ipa->sender->free_notify_net = true;
++		WRITE_ONCE(ipa->sender->free_notify_net, true);
+ 		schedule_work(&ipa->flow_ctrl_work);
+ 		break;
+ 	default:
+diff --git a/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c b/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c
+index 6aac239..d889e8f 100644
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c
+@@ -309,8 +309,10 @@ static void sipa_fill_free_fifo_node(struct sipa_skb_receiver *receiver,
+ 				break;
+ 			}
+ 
+-			sipa_put_recv_array_node(fill_array, skb,
+-						 dma_addr, false);
++			if (sipa_put_recv_array_node(fill_array, skb, dma_addr, false)) {
++				dev_kfree_skb_any(skb);
++				break;
++			}
+ 			item->address = dma_addr;
+ 			item->offset = NET_SKB_PAD;
+ 			item->length = SIPA_RECV_BUF_LEN - NET_SKB_PAD;
+@@ -354,6 +356,7 @@ static int sipa_fill_free_node_by_alloc_skb(struct sipa_skb_receiver *receiver,
+ 			if (dma_mapping_error(receiver->dev, dma_addr)) {
+ 				dev_err(receiver->dev,
+ 					"prepare free node dma map err\n");
++				dev_kfree_skb_any(skb);
+ 				break;
+ 			}
+ 		} else {
+@@ -366,12 +369,18 @@ static int sipa_fill_free_node_by_alloc_skb(struct sipa_skb_receiver *receiver,
+ 						 id, success_cnt);
+ 		if (!item) {
+ 			dev_err(receiver->dev, "item is null\n");
++			dma_unmap_single(receiver->dev, dma_addr,
++					 SIPA_RECV_BUF_LEN, DMA_FROM_DEVICE);
+ 			dev_kfree_skb_any(skb);
+ 			break;
+ 		}
+ 
+-		sipa_put_recv_array_node(fill_array, skb,
+-					 dma_addr, true);
++		if (sipa_put_recv_array_node(fill_array, skb, dma_addr, true)) {
++			dma_unmap_single(receiver->dev, dma_addr,
++					 SIPA_RECV_BUF_LEN, DMA_FROM_DEVICE);
++			dev_kfree_skb_any(skb);
++			break;
++		}
+ 
+ 		memset(item, 0, sizeof(struct sipa_node_desc_tag));
+ 		item->address = dma_addr;
+@@ -478,6 +487,7 @@ static int sipa_fill_remaining_node(struct sipa_skb_receiver *receiver,
+ 		dma_addr = skb_mem->dma_addr + i * SIPA_RECV_BUF_LEN;
+ 		if (!dma_addr) {
+ 			dev_err(receiver->dev, "dma_addr is null\n");
++			dev_kfree_skb_any(skb);
+ 			break;
+ 		}
+ 
+@@ -487,12 +497,14 @@ static int sipa_fill_remaining_node(struct sipa_skb_receiver *receiver,
+ 						 SIPA_RECV_BUF_LEN,
+ 						 DMA_TO_DEVICE);
+ 
+-		sipa_put_recv_array_node(fill_array, skb,
+-					 dma_addr, false);
+-
+ 		item = sipa_hal_get_rx_node_wptr(receiver->dev, id, i);
+ 		if (!item) {
+ 			dev_err(receiver->dev, "item is null\n");
++			dev_kfree_skb_any(skb);
++			break;
++		}
++		if (sipa_put_recv_array_node(fill_array, skb, dma_addr, false)) {
++			dev_kfree_skb_any(skb);
+ 			break;
+ 		}
+ 

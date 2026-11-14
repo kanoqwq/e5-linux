@@ -229,7 +229,7 @@ def start(args, radio=False):
             raise ValueError('Data SIM changed; refresh before switching')
         if not radio and not radio_policy()[int(target)]:
             raise ValueError('Enable the target SIM radio before switching')
-        if not radio and target == actual:
+        if not radio and target == actual and saved() == target:
             return dict(ok=True, state='done', target=target, unchanged=True)
         # Bounded retention; only completed/stale jobs can exist while we own
         # the lock. No settings, SMS or radio calibration are stored here.

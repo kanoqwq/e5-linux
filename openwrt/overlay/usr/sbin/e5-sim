@@ -92,7 +92,26 @@ switch() {
 		echo 'Enable the target SIM radio before switching' >&2; return 1;
 	}
 	new=$1
-	[ "$new" = "$(card_in_use)" ] && { echo "already on SIM card $new"; exit 0; }
+	if [ "$new" = "$(card_in_use)" ]; then
+		boot=$(uci -q get e5-sim.main.card || true)
+		if [ "$boot" != "$new" ]; then
+			# Explicitly adopt the live card without reloading its modem.
+			# A previous empty card may have left WAN unavailable; ifup
+			# alone cannot clear that state. Preserve manual data-off.
+			state=$(ubus -t 3 call network.interface.wan status)
+			uci set e5-sim.main.card="$new" && uci commit e5-sim || return 1
+			if [ "$(printf '%s' "$state" | jsonfilter -e '@.autostart')" = true ] &&
+			   [ "$(printf '%s' "$state" | jsonfilter -e '@.up')" = false ] &&
+			   [ "$(printf '%s' "$state" | jsonfilter -e '@.pending')" = false ]; then
+				if [ "$(printf '%s' "$state" | jsonfilter -e '@.available')" = false ]; then
+					ubus -t 3 call network.interface.wan notify_proto '{"action":5,"available":true}' >/dev/null || return 1
+				fi
+				ifup wan || return 1
+			fi
+		fi
+		echo "already on SIM card $new"
+		return 0
+	fi
 	if pidof ModemManager >/dev/null; then
 		nr=$(at_card $new AT+SPLBAND=3 | nr_bands)
 		[ "$nr" = " none" ] &&

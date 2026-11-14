@@ -8,7 +8,8 @@ import tempfile
 PATCH = Path(__file__).with_name('sipa-data-path.patch')
 PATCHES = (PATCH, Path(__file__).with_name('sipa-tx-retry.patch'),
            Path(__file__).with_name('sipa-completion-events.patch'),
-           Path(__file__).with_name('sipa-rm-order.patch'))
+           Path(__file__).with_name('sipa-rm-order.patch'),
+           Path(__file__).with_name('sipa-buffer-lifecycle.patch'))
 
 
 def apply(kernel):
