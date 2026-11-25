@@ -235,7 +235,7 @@ def verify_archive(path, require_android=False):
         if tool.get('protocol') != 1 or not required.issubset(tool.get('files', {})):
             raise ValueError('Diff Studio missing native entries/runtime')
         for name, wanted in tool['files'].items():
-            if (name not in required and not name.startswith(('backend/', 'tools/backend/',
+            if (name not in required and name != 'OpenWrt-Diff-Studio-macOS.command' and not name.startswith(('backend/', 'tools/backend/',
                     'tools/macos/backend/', 'OpenWrt-Diff-Studio.app/'))) or manifest.get(name) != wanted:
                 raise ValueError('Diff Studio runtime scope/checksum mismatch: ' + name)
 

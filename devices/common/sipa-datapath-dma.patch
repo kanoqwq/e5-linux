@@ -1,0 +1,245 @@
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c
+@@ -159,7 +159,7 @@
+ 	skb_mem->page = page;
+ 	skb_mem->dma_addr = dma_map_single(receiver->dev,
+ 					   skb_mem->virt, size,
+-					   DMA_FROM_DEVICE);
++					   DMA_BIDIRECTIONAL);
+ 	if (dma_mapping_error(receiver->dev, skb_mem->dma_addr)) {
+ 		dev_err(receiver->dev, "sipa alloc mem dma map err\n");
+ 		kfree(skb_mem);
+@@ -173,6 +173,19 @@
+ 		list_add(&skb_mem->list, &fill_arrays->mem_list);
+ 	else
+ 		list_add_tail(&skb_mem->list, &fill_arrays->mem_list);
++}
++
++static struct sk_buff *sipa_build_rx_skb(struct sipa_skb_receiver *receiver,
++				       struct sipa_recv_mem_list *mem, u32 offset)
++{
++	struct sk_buff *skb;
++
++	dma_sync_single_range_for_cpu(receiver->dev, mem->dma_addr, offset,
++				      SIPA_RECV_BUF_LEN, DMA_BIDIRECTIONAL);
++	skb = build_skb(mem->virt + offset, SIPA_RECV_BUF_LEN);
++	if (skb)
++		page_ref_inc(mem->page);
++	return skb;
+ }
+ 
+ static void sipa_prepare_free_node(struct sipa_skb_receiver *receiver, u32 chan)
+@@ -187,34 +200,36 @@
+ 	enum sipa_cmn_fifo_index fifo_id = receiver->ep->recv_fifo.idx + chan;
+ 
+ 	list_for_each_entry(skb_mem, &fill_arrays->mem_list, list) {
+-		dma_addr = skb_mem->dma_addr;
+ 		virt_tail = skb_mem->virt + skb_mem->size;
+ 		for (virt = skb_mem->virt; virt < virt_tail;
+ 		     virt += SIPA_RECV_BUF_LEN) {
+ 			item = sipa_hal_get_rx_node_wptr(receiver->dev,
+-							 fifo_id, i++);
++							 fifo_id, i);
+ 			if (!item) {
+ 				dev_err(receiver->dev, "sipa get item err\n");
+-				i--;
+ 				goto out;
+ 			}
+ 
+-			skb = build_skb(virt, SIPA_RECV_BUF_LEN);
++			dma_addr = skb_mem->dma_addr + (virt - skb_mem->virt);
++			skb = sipa_build_rx_skb(receiver, skb_mem, virt - skb_mem->virt);
+ 			if (!skb) {
+ 				dev_err(receiver->dev, "%s build skb fail!\n", __func__);
+-				i--;
+ 				continue;
+ 			}
+ 
+-			page_ref_inc(skb_mem->page);
+-			sipa_put_recv_array_node(fill_arrays, skb,
+-						 dma_addr, false);
++			if (sipa_put_recv_array_node(fill_arrays, skb, dma_addr, false)) {
++				dev_kfree_skb_any(skb);
++				goto out;
++			}
++			dma_sync_single_range_for_device(receiver->dev, skb_mem->dma_addr,
++						 virt - skb_mem->virt, SIPA_RECV_BUF_LEN,
++						 DMA_BIDIRECTIONAL);
+ 
+ 			item->address = dma_addr;
+ 			item->offset = NET_SKB_PAD;
+ 			item->length = SIPA_RECV_BUF_LEN - NET_SKB_PAD;
+ 
+-			dma_addr += SIPA_RECV_BUF_LEN;
++			i++;
+ 		}
+ 
+ 		if (i == fill_arrays->depth)
+@@ -280,27 +295,18 @@
+ 
+ 		ready = false;
+ 		for (j = 0; j < SIPA_PER_PAGE_CAPACITY; j++) {
+-			skb = build_skb((void *)(skb_mem->virt +
+-						 j * SIPA_RECV_BUF_LEN),
+-					SIPA_RECV_BUF_LEN);
++			skb = sipa_build_rx_skb(receiver, skb_mem, j * SIPA_RECV_BUF_LEN);
+ 			if (!skb) {
+ 				dev_err(receiver->dev, "%s build skb fail\n", __func__);
+ 				break;
+ 			}
+ 
+-			page_ref_inc(skb_mem->page);
+ 			dma_addr = skb_mem->dma_addr + j * SIPA_RECV_BUF_LEN;
+ 			if (!dma_addr) {
+ 				dev_err(receiver->dev, "dma_addr is null\n");
+ 				dev_kfree_skb_any(skb);
+ 				break;
+ 			}
+-
+-			dma_sync_single_range_for_device(receiver->dev,
+-							 dma_addr,
+-							 0,
+-							 SIPA_RECV_BUF_LEN,
+-							 DMA_TO_DEVICE);
+ 
+ 			item = sipa_hal_get_rx_node_wptr(receiver->dev, id,
+ 							 success_cnt);
+@@ -314,6 +320,9 @@
+ 				dev_kfree_skb_any(skb);
+ 				break;
+ 			}
++			dma_sync_single_range_for_device(receiver->dev, skb_mem->dma_addr,
++						 j * SIPA_RECV_BUF_LEN, SIPA_RECV_BUF_LEN,
++						 DMA_BIDIRECTIONAL);
+ 			item->address = dma_addr;
+ 			item->offset = NET_SKB_PAD;
+ 			item->length = SIPA_RECV_BUF_LEN - NET_SKB_PAD;
+@@ -476,15 +485,12 @@
+ 		cnt = SIPA_PER_PAGE_CAPACITY;
+ 
+ 	for (i = 0; i < cnt; i++) {
+-		skb = build_skb((void *)(skb_mem->virt +
+-					 i * SIPA_RECV_BUF_LEN),
+-				SIPA_RECV_BUF_LEN);
++		skb = sipa_build_rx_skb(receiver, skb_mem, i * SIPA_RECV_BUF_LEN);
+ 		if (!skb) {
+ 			dev_err(receiver->dev, "%s build skb fail\n", __func__);
+ 			break;
+ 		}
+ 
+-		page_ref_inc(skb_mem->page);
+ 		dma_addr = skb_mem->dma_addr + i * SIPA_RECV_BUF_LEN;
+ 		if (!dma_addr) {
+ 			dev_err(receiver->dev, "dma_addr is null\n");
+@@ -492,12 +498,6 @@
+ 			break;
+ 		}
+ 
+-		dma_sync_single_range_for_device(receiver->dev,
+-						 dma_addr,
+-						 0,
+-						 SIPA_RECV_BUF_LEN,
+-						 DMA_TO_DEVICE);
+-
+ 		item = sipa_hal_get_rx_node_wptr(receiver->dev, id, i);
+ 		if (!item) {
+ 			dev_err(receiver->dev, "item is null\n");
+@@ -508,6 +508,9 @@
+ 			dev_kfree_skb_any(skb);
+ 			break;
+ 		}
++		dma_sync_single_range_for_device(receiver->dev, skb_mem->dma_addr,
++					 i * SIPA_RECV_BUF_LEN, SIPA_RECV_BUF_LEN,
++					 DMA_BIDIRECTIONAL);
+ 
+ 		item->address = dma_addr;
+ 		item->offset = NET_SKB_PAD;
+@@ -749,9 +752,6 @@
+ 		goto status_err;
+ 	}
+ 
+-	if (!sipa_check_recv_node_value(node, addr, id, recv_skb))
+-		goto recv_err;
+-
+ 	if (need_unmap) {
+ 		dma_unmap_single(receiver->dev, addr,
+ 				 SIPA_RECV_BUF_LEN,
+@@ -760,10 +760,13 @@
+ 		dma_sync_single_range_for_cpu(receiver->dev, addr,
+ 					      0,
+ 					      SIPA_RECV_BUF_LEN,
+-					      DMA_FROM_DEVICE);
+-
++					      DMA_BIDIRECTIONAL);
++	}
++	/* Validation/freeing can touch skb_shared_info: regain CPU ownership first. */
++	if (!sipa_check_recv_node_value(node, addr, id, recv_skb))
++		goto recv_err;
++	if (!need_unmap)
+ 		skb_reserve(recv_skb, NET_SKB_PAD);
+-	}
+ 
+ 	*netid = node->net_id;
+ 	*src_id = node->src;
+@@ -781,10 +784,6 @@
+ 
+ recv_err:
+ 	dev_kfree_skb_any(recv_skb);
+-	if (need_unmap)
+-		dma_unmap_single(receiver->dev, addr,
+-				 SIPA_RECV_BUF_LEN,
+-				 DMA_FROM_DEVICE);
+ tx_node_err:
+ 	sipa_hal_add_tx_fifo_rptr(receiver->dev, id, 1);
+ 	atomic_inc(&fill_array->need_fill_cnt);
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c
+@@ -157,7 +157,7 @@
+ static void sipa_free_sent_items(void)
+ {
+ 	u32 i, num = 0, success_cnt = 0;
+-	int ret;
++	int ret, retry;
+ 	struct sipa_node_desc_tag *node = NULL;
+ 	struct sipa_skb_sender *sender;
+ 	struct sipa_plat_drv_cfg *ipa = sipa_get_ctrl_pointer();
+@@ -193,6 +193,12 @@
+ 
+ 		/* An errored completion still owns a buffer that must be reclaimed. */
+ 		ret = sipa_do_free_skb(node);
++		for (retry = 0; !ret && retry < 3; retry++) {
++			/* List retries alone cannot refresh a DMA completion. */
++			sipa_hal_sync_node_from_tx_fifo(sender->dev,
++						 sender->ep->send_fifo.idx, num);
++			ret = sipa_do_free_skb(node);
++		}
+ 		if (ret)
+ 			success_cnt++;
+ 		else
+--- a/drivers/unisoc_platform/net/sipa_v3/sipa_eth.c
++++ b/drivers/unisoc_platform/net/sipa_v3/sipa_eth.c
+@@ -169,16 +169,20 @@
+ 			*checksum = saved_checksum;
+ 		if (pushed_header)
+ 			skb_pull(skb, ETH_HLEN);
++		if (ret != -EAGAIN && ret != -EINPROGRESS) {
++			stats->tx_errors++;
++			stats->tx_dropped++;
++			pr_err_ratelimited("%s fail to send, ret %d\n", dev->name, ret);
++			dev_kfree_skb_any(skb);
++			return NETDEV_TX_OK;
++		}
+ 		spin_lock_irqsave(&queue_lock, flags);
+ 		if (ret == -EAGAIN || sipa_nic_check_flow_ctrl(sipa_eth->nic_id))
+ 			netif_stop_queue(dev);
+ 		spin_unlock_irqrestore(&queue_lock, flags);
+ 		/* Like MU300: arm recovery even after the queue has been stopped. */
+ 		sipa_nic_trigger_flow_ctrl_work(sipa_eth->nic_id, ret);
+-		if (ret != -EAGAIN && ret != -EINPROGRESS) {
+-			stats->tx_errors++;
+-			pr_err_ratelimited("%s fail to send, ret %d\n", dev->name, ret);
+-		}
++
+ 		return NETDEV_TX_BUSY;
+ 	}
+ 

@@ -177,6 +177,7 @@ class Archives(unittest.TestCase):
         files['docs/GUI-BUILD-android.json']=json.dumps({'protocol':1,'platform':'android-aarch64','debug':False,
             'signing':{'alias':'fixture'},'files':{'OpenWrt-Tools.apk':hashlib.sha256(files['OpenWrt-Tools.apk']).hexdigest()}}).encode()
         runtime = {'OpenWrt-Diff-Studio.exe': b'native diff', 'OpenWrt-Diff-Studio.py': b'diff CLI',
+                   'OpenWrt-Diff-Studio-macOS.command': b'#!/bin/sh\n',
                    'OpenWrt-Diff-Studio.app/Contents/MacOS/openwrt-installer': b'mac diff',
                    'tools/backend/openwrt-backend.exe': b'Windows backend',
                    'tools/macos/backend/openwrt-backend': b'Mac backend'}

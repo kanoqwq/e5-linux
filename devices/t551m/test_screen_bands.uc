@@ -26,6 +26,8 @@ check(index(item('nr_bands').display_value.en,'n80')>=0,'Actual readback hidden 
 state.nr.locked='';
 check(item('nr_bands').none_label.en=='Auto','Automatic label differs from web');
 check(item('net_mode').value=='4g' && item('net_mode').slot=='1','Wrong SIM scope');
+check(!item('lock_state').pending,'Warm state is still pending');
+check(item('lock_refresh').reload,'Manual refresh will leave disabled controls unchanged');
 check(item('nr_mode').value=='sa','Standalone 5G access setting lost');
 check(length(filter(item('cell_lock').options,o=>o.value=='lte:3740,36'))==1,'Neighbors lost');
 for(let pair in [['net_mode','sa'],['net_mode','5g4g'],['nr_mode','nsa'],['nr_bands',[77]],['lte_bands',[1,8]],['bands_default',null],['auto_apply',false],['cell_lock','lte:3740,36']]) {
@@ -39,4 +41,7 @@ let count=length(calls);
 check(type(network.set('lte_bands','1;reboot','1'))=='string'&&length(calls)==count,'Invalid input reached backend');
 state={error:'AT unavailable',auto_apply:1};
 check(item('lte_bands').type=='info'&&item('lte_bands').value==null,'Failed read reported unlocked');
+check(item('lock_state').pending,'Cold cache does not tell the screen to follow the read');
+state={mode:{label:'auto',gran:'1'},caps:{lte:'1,8',nr:'41,78'}};
+check(!item('lock_state').pending && item('lte_bands').type=='multi','Completed read did not enable controls');
 print('PASS: shared per-SIM network modes, dynamic bands, neighbors, captured scope, asynchronous jobs and failures\n');

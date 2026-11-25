@@ -582,6 +582,7 @@ async function readStatus() {
 	}
 	clearTimeout(timeout);
 	done(failed);
+	stRefreshNetwork();
 }
 
 function post(path, body) {
@@ -1338,8 +1339,9 @@ function stRefreshVisible() {
 		// it first, then make one fresh read; never replace an open editor.
 		await pageRequests.get(P.settings + ':' + path)?.catch(() => {});
 		if (!visible() || generation !== stWakeGeneration) return;
+		if (v.networkPending || v.networkTimeout) v.networkDeadline = null;
 		const r = await pageRead(path, P.settings).catch(() => null);
-		if (r && visible() && generation === stWakeGeneration) { v.items = r.items ?? []; stRender(); }
+		if (r && visible() && generation === stWakeGeneration) { stCategoryResult(v, r); stRender(); }
 	})().finally(() => { stWakeRequest = null; });
 	return stWakeRequest;
 }
@@ -1354,9 +1356,40 @@ async function stOpen() {
 	}
 }
 
-async function stLoadCat(v) {
-	const r = await pageRead('/api/settings/' + v.cat.id, P.settings).catch(() => null);
-	if (r) v.items = r.items ?? [];
+function stCategoryResult(v, r) {
+	v.items = r.items ?? [];
+	const pending = v.cat.id == 'network' && v.items.some(it => it.id == 'lock_state' && it.pending);
+	// The backend already started one cache read. Follow it using the existing
+	// status ticks, with a deadline; never start another permanent poll loop.
+	v.networkDeadline = pending ? (v.networkDeadline ?? performance.now() + 30000) : null;
+	v.networkPending = pending && performance.now() < v.networkDeadline;
+	v.networkTimeout = pending && !v.networkPending;
+}
+
+function stRefreshNetwork() {
+	const v = stTop();
+	if (blank || page != P.settings || T551M.isLocked() || v?.view != 'cat' ||
+		v.cat.id != 'network' || !v.networkPending || v.saving || v.loading) return;
+	if (performance.now() >= v.networkDeadline) {
+		v.networkPending = false; v.networkTimeout = true; stRender();
+		return;
+	}
+	stLoadCat(v);
+}
+
+async function stLoadCat(v, afterWrite = false) {
+	const path = '/api/settings/' + v.cat.id;
+	if (afterWrite) {
+		// Do not reuse a snapshot started before a SIM selection or refresh.
+		await pageRequests.get(P.settings + ':' + path)?.catch(() => {});
+		if (!st.includes(v)) return false;
+		v.networkDeadline = null;
+	}
+	v.loading = true;
+	const r = await pageRead(path, P.settings).catch(() => null);
+	v.loading = false;
+	if (r) stCategoryResult(v, r);
+	else v.networkPending = false;
 	if (stTop() === v) stRender();
 	return r != null;
 }
@@ -1408,6 +1441,7 @@ function stRow(key, label, value, opts = {}) {
 function stRender() {
 	const v = stTop();
 	if (!v) return;
+	pageLoadPending(P.settings, v.view == 'cat' && !!v.networkPending);
 	const path = st.map((x) => x.view == 'menu' ? t('settings') : x.view == 'store' ? t('app_store') : x.view == 'atres' ? x.cmd : x.view == 'app' ? (lbl(x.app.name) || x.app.id) : x.cat ? lbl(x.cat.label) : x.item ? lbl(x.item.label) : x.dev ? (x.dev.name ?? x.dev.ip ?? x.dev.mac) : x.view == 'btdev' ? (x.name ?? x.mac) : '').join(' › ');
 	setText('st-path', path);
 	let html = '';
@@ -1421,6 +1455,10 @@ function stRender() {
 			v.items.map((it) => stRow('item:' + it.id, lbl(it.label), stValue(it),
 				{ info: it.type == 'info', on: it.type == 'toggle' && it.value, note: lbl(it.note),
 				  chev: ['choice', 'number', 'multi', 'image', 'category'].includes(it.type) })).join('');
+		if (v.networkPending || v.networkTimeout)
+			html = `<div class="stnote" role="status">${esc(v.networkPending ?
+				(lang == 'zh' ? '正在读取网络模式和频段…' : 'Reading network modes and bands…') :
+				(lang == 'zh' ? '读取超时，请点“刷新锁定状态”重试' : 'Read timed out. Select “Refresh lock state” to retry.'))}</div>` + html;
 	} else if (v.view == 'apn' || v.view == 'apnedit') {
 		html = stAPNRender(v);
 	} else if (v.view == 'edit') {
@@ -1561,7 +1599,7 @@ async function stPost(v, body) {
 		const i = v.items.findIndex((x) => x.id == r.item.id);
 		if (i >= 0) v.items[i] = r.item;
 	}
-	if (r?.ok && r.item?.reload) stLoadCat(v);
+	if (r?.ok && r.item?.reload) stLoadCat(v, true);
 	if (r?.ok && v.cat.id == 'usb' && ['reset','usb_role','usb_host_boot'].includes(body.id)) {
 		const refresh = async () => {
 			if (!st.includes(v)) return;

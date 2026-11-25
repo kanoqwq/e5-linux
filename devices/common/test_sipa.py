@@ -170,6 +170,13 @@ int main(void) {
  assert(sipa_eth_start_xmit(&skb,&dev)==NETDEV_TX_OK && freed==2 && stats.tx_dropped==2);
  cow_result=0;skb.headroom=0;next_result=0;
  assert(sipa_eth_start_xmit(&skb,&dev)==NETDEV_TX_OK&&skb.len==114&&!skb.headroom);
+ for(int error=1;error<=3;error++) {
+  int before_freed=freed,before_recovery=recovery;
+  next_result=error==1?-EIO:error==2?-ENOMEM:-ENODEV;
+  skb.len=100;skb.headroom=64;dev.stopped=false;
+  assert(sipa_eth_start_xmit(&skb,&dev)==NETDEV_TX_OK);
+  assert(freed==before_freed+1 && recovery==before_recovery && !dev.stopped);
+ }
  puts("PASS: 16 protocol/header/checksum combinations, 50 retries each preserve geometry and checksum seed, balanced recovery and consumption");
 }
 '''
@@ -185,10 +192,13 @@ static struct endpoint ep={.send_fifo.rx_fifo.fifo_depth=8};
 static struct sipa_skb_sender sender={.ep=&ep};
 static struct sipa_plat_drv_cfg ipa={.sender=&sender};
 static struct sipa_node_desc_tag nodes[4];
-static int count, advanced, null_at=-1, freed, notified;
+static int count, advanced, null_at=-1, freed, notified, syncs, stale;
 static struct sipa_plat_drv_cfg *sipa_get_ctrl_pointer(void){return &ipa;}
 static void sipa_hal_cmn_fifo_get_filled_depth(int dev,int idx,void *rx,u32 *num){(void)dev;(void)idx;(void)rx;*num=count;}
-static void sipa_hal_sync_node_from_tx_fifo(int dev,int idx,u32 num){(void)dev;(void)idx;(void)num;}
+static void sipa_hal_sync_node_from_tx_fifo(int dev,int idx,u32 num){
+ (void)dev;(void)idx;(void)num;assert(!held);syncs++;
+ if(stale && syncs>1)nodes[0].match=1;
+}
 static struct sipa_node_desc_tag *sipa_hal_get_tx_node_rptr(int dev,int idx,u32 i){(void)dev;(void)idx;return (int)i==null_at?NULL:&nodes[i];}
 static bool sipa_do_free_skb(struct sipa_node_desc_tag *node){if(node->match){freed++;return true;}return false;}
 static void sipa_hal_add_tx_fifo_rptr(int dev,int idx,u32 num){(void)dev;(void)idx;advanced+=num;}
@@ -212,6 +222,8 @@ int main(void) {
   assert(sender.completion_error_cnt==error);
  }
  assert(advanced==15&&freed==15);
+ count=1;syncs=0;stale=1;nodes[0].match=0;advanced=freed=0;
+ sipa_free_sent_items();assert(syncs==2&&freed==1&&advanced==1);
  puts("PASS: unmatched completion cannot discard later buffers, credits count reclaimed buffers, null node advances only consumed prefix");
 }
 '''
@@ -290,10 +302,17 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(subprocess.check_output(['git','-c','safe.directory='+str(kernel),'-C',str(kernel),'show','HEAD:'+name]))
         original = {name:(root/name).read_bytes() for name in paths}
+        # Upgrade the immediately preceding full patch series as well as a clean tree.
+        for item in scope['PATCHES'][:-1]:
+            subprocess.run(['git','apply','--whitespace=nowarn',str(item)],cwd=root,check=True)
         apply(root)
         before = {name:(root/name).read_bytes() for name in paths}
         apply(root)
         assert before == {name:(root/name).read_bytes() for name in paths}, 'Not idempotent'
+        for name,data in original.items():
+            (root/name).write_bytes(data)
+        apply(root)
+        assert before == {name:(root/name).read_bytes() for name in paths}, 'Clean patch differs'
         # Incremental builders already contain the previous public SIPA patch.
         # Upgrading them must produce exactly the same source as a clean build.
         for name,data in original.items():
