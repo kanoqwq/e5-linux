@@ -2,6 +2,7 @@
 'require view';
 'require uci';
 'require mu300.common as M';
+'require mu300.boot-controls as Boot';
 'require mu300.sim-radio as SimRadio';
 
 /* MU300 状态看板 -- LuCI 落地页（menu.d 挂在 admin/home）。
@@ -304,7 +305,7 @@ return view.extend({
 		var act = function(op, arg, note, btn) {
 			M.busy(btn, true);
 			M.toast(note || ('正在执行 ' + op + ' …'), { type: 'busy' });
-			return L.resolveDefault(M.callAct(op, arg)).then(function(r) {
+			return L.resolveDefault(((op === 'os' || op === 'reboot' || op === 'poweroff') ? M.callBootAct(op, arg) : M.callAct(op, arg))).then(function(r) {
                 if(op==='radio' && r && r.ok && r.id)
                     return SimRadio.wait(r,function(){return !self._pollStopped && root.isConnected;}).then(function(done) {
                         return done && Object.assign({},done,{op:'radio '+arg});
@@ -352,29 +353,7 @@ return view.extend({
 			return confirmAction(this, '重启调制解调器', '蜂窝连接会中断 1-2 分钟。',
 				{ danger: true }, 'modem-reset', null);
 		};
-		q('btn-reboot').onclick = function() {
-			var btn = this;
-			if (self._pollStopped || self._quickPending || btn.disabled) return;
-			self._quickPending = true;
-			return M.choiceBox('关机或重启', '请选择关机或重启，执行后所有连接都会断开。', [
-				{ label: '取消', value: undefined },
-				{ label: '关机', value: 'poweroff', danger: true },
-				{ label: '重启', value: 'reboot', danger: true }
-			]).then(function(op) {
-				if ((op !== 'poweroff' && op !== 'reboot') || self._pollStopped || !root.isConnected) return;
-				return act(op, null, op === 'poweroff' ? '正在关机…' : '正在重启…', btn);
-			}).finally(function() { self._quickPending = false; });
-		};
-		q('btn-default').onclick = function() {
-			return confirmAction(this, '设为默认启动',
-				'以后开机默认进入 OpenWrt；启动失败仍保留 Android 回退。现在不会重启。',
-				{ okText: '确定' }, 'os', 'linux-default');
-		};
-		q('btn-android').onclick = function() {
-			return confirmAction(this, '切换到 Android 系统',
-				'将 Android 设为默认启动系统并立即重启，此管理页面与蜂窝共享都会断开。',
-				{ danger: true, okText: '切换并重启' }, 'os', 'android', '正在武装 Android 引导并重启…');
-		};
+		Boot.bind(self, root, act, function() { return !self._pollStopped && root.isConnected; });
 		q('reveal').onclick = function() {
 			self.identShown = !self.identShown;
 			M.v('reveal').textContent = self.identShown ? '隐藏卡号信息' : '显示卡号信息';

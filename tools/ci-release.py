@@ -98,8 +98,9 @@ def audit_root(info):
             expected[prefix + tail] = file_digest(root / item)
     # These shared startup files are copied from the Debian overlay, rather
     # than openwrt/overlay. Verify the selective cold-start adapter as well.
-    for name in ('vendor-start.sh', 'e5-modem-coldboot'):
+    for name in ('vendor-start.sh', 'e5-modem-coldboot', 'e5-next-boot'):
         expected['opt/e5/' + name] = file_digest(TOP / 'rootfs/overlay/opt/e5' / name)
+    expected['etc/init.d/e5-boot-ok'] = file_digest(TOP/'openwrt/overlay/etc/init.d/e5-boot-ok')
     helper = TOP / 'out/modem-loader/modem-loader-patch'
     receipt = json.loads(helper.with_suffix('.build.json').read_text())
     if (receipt['inputs']['source'] != file_digest(TOP/'openwrt/src/modem-loader-patch.c') or

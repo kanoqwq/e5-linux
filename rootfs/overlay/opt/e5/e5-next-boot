@@ -2,6 +2,7 @@
 # Choose what the E5 boots next and keep Linux as default safely.
 #   e5-next-boot linux    Linux stays the default (re-armed on every successful boot)
 #   e5-next-boot android  the next reboot, and every one after it, goes to Android
+#   --auto-default      OpenWrt one-minute task; explicit choices in this boot take priority
 #   e5-next-boot --rearm  used by e5-boot-ok after a successful boot
 #   e5-next-boot status
 #   e5-next-boot next     what the next reboot boots, "linux" or "android", from misc as it is
@@ -14,8 +15,8 @@
 #
 # That is also why --rearm does nothing unless the default is linux: an image that was asked
 # for one trial boot must not keep re-arming itself.  Turning Linux into the persistent
-# default is therefore explicit -- "e5-next-boot linux" -- and it is the same command that
-# arms slot b, so the two can never disagree.
+# default is selected through the same transaction used by the one-minute OpenWrt task,
+# which also arms the Linux slot, so the two can never disagree.
 #
 # `e5-next-boot android` is the way back to the stock system from a running Linux: it writes
 # the slot-a block and records the choice; reboot afterwards.
@@ -107,15 +108,27 @@ set_default() (
 # Include the successful-boot rearm in the same lock: an Android selection
 # must not be overwritten by a concurrently finishing startup service.
 case "${1:-status}" in
-    linux|android|--rearm|attempts)
+    linux|android|--auto-default|--rearm|attempts)
+        mkdir -p /run || exit 1
         exec 9>/run/openwrt-default-boot.lock
         flock -n 9 || { echo "boot control busy" >&2; exit 1; } ;;
+esac
+
+# Explicit choices win over the one-shot automatic promotion for this boot.
+case "${1:-status}" in
+    linux|android) : > /run/openwrt-boot-manual ;;
 esac
 
 case "${1:-status}" in
     linux)   trial && { echo "a trial image (e5.openwrt=) is never the default boot" >&2; exit 1; }
              set_default linux; echo "default boot: linux (slot $LINUX_SLOT armed)" ;;
     android) set_default android; echo "next boot: android (slot $ANDROID_SLOT)" ;;
+    --auto-default)
+        [ ! -e /run/openwrt-boot-manual ] || exit 0
+        choice=$(cat "$CONF" 2>/dev/null || true)
+        case "$choice" in linux) exit 0;; android|'') ;; *) exit 0;; esac
+        trial && exit 0
+        set_default linux; echo "normal boot reached one minute; default boot: linux" ;;
     --rearm) [ "$(cat "$CONF" 2>/dev/null)" = linux ] && write_bc "$BC_B" && echo "slot $LINUX_SLOT re-armed" || echo "default boot is not linux, nothing to do" ;;
     status)  echo "default boot: $(cat "$CONF" 2>/dev/null || echo android)"
              echo "next boot: $(next_target)"

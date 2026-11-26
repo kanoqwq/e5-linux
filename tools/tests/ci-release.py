@@ -108,9 +108,12 @@ class RootAudit(unittest.TestCase):
             iwinfo = runpy.run_path(str(TOP / 'openwrt/iwinfo-ap-scan-state.py'))
             for name in iwinfo['SOURCES']:
                 (top / 'openwrt' / name).write_bytes((TOP / 'openwrt' / name).read_bytes())
-            for name in ('vendor-start.sh', 'e5-modem-coldboot'):
+            for name in ('vendor-start.sh', 'e5-modem-coldboot', 'e5-next-boot'):
                 (top / 'rootfs/overlay/opt/e5' / name).write_bytes(b'startup fixture')
                 files = {**files, 'opt/e5/' + name: b'startup fixture'}
+            service=top/'openwrt/overlay/etc/init.d/e5-boot-ok'
+            service.parent.mkdir(parents=True,exist_ok=True);service.write_bytes(b'boot-success fixture')
+            files={**files,'etc/init.d/e5-boot-ok':service.read_bytes()}
             for name in ('openwrt/src/modem-loader-patch.c', 'devices/common/build-modem-loader.py'):
                 target = top/name; target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((TOP/name).read_bytes())

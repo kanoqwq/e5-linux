@@ -46,7 +46,12 @@ inp() {  # inp JSONPATH [default] -> param value
 # Scope is per request, never a persistent data-SIM selection. Detached workers
 # inherit the immutable slot and private cache path from this request.
 if [ "${1:-}" = call ]; then
-    case ${2:-} in
+    scope_method=${2:-}
+    # Power/boot actions belong to the machine, including when the modem is off.
+    if [ "$scope_method" = act ]; then
+        case "$(inp '@.op')" in os|reboot|poweroff) scope_method= ;; esac
+    fi
+    case "$scope_method" in
         status|rates|cells|signal|act|at|at_history|lock_get|lock_set|lock_status|traffic_get|traffic_set)
             selected=$(inp '@.slot')
             case "$selected" in

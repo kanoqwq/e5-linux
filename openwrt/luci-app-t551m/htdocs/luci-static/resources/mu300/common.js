@@ -111,6 +111,8 @@ function callSimGet() {
 var callSimSet = rpc.declare({object:'mu300dash',method:'sim_set',params:['slot','current','confirm'],expect:{'':{}},nobatch:true});
 var callSimStatus = rpc.declare({object:'mu300dash',method:'sim_status',params:['id'],expect:{'':{}},nobatch:true});
 var callAct = scopedRpc('act',['op','arg']);
+// Machine-wide boot actions must work without a ready data SIM.
+var callBootAct = rpc.declare({object:'mu300dash',method:'act',params:['op','arg'],expect:{'':{}}});
 var callAt = scopedRpc('at',['cmd']);
 var callAtHist = scopedRpc('at_history');
 var callLockGet = scopedRpc('lock_get');
@@ -778,6 +780,16 @@ function errorText(value, language) {
 /* END SHARED PLATFORM MESSAGES */
 
 var DASH_I18N = {
+    "启动方式": ["Boot mode", "Başlatma modu"],
+    "永久启动 OpenWrt": ["Boot OpenWrt by default", "OpenWrt varsayılan başlatma"],
+    "当前为永久启动 OpenWrt": ["OpenWrt is the default boot system", "OpenWrt varsayılan başlatma sistemi"],
+    "当前启动方式未知": ["Boot mode unavailable", "Başlatma modu bilinmiyor"],
+    "切换为临时启动": ["Use temporary boot", "Geçici başlatmaya geç"],
+    "将默认启动系统设为 Android，当前 OpenWrt 会话继续运行；下次重启进入 Android。": ["Make Android the default boot system. The current OpenWrt session stays running; the next restart enters Android.", "Android varsayılan başlatma sistemi olur. Mevcut OpenWrt oturumu devam eder; sonraki yeniden başlatma Android’e girer."],
+    "启动方式已保存": ["Boot mode saved", "Başlatma modu kaydedildi"],
+    "启动方式设置失败，请重试": ["Could not save boot mode; please retry", "Başlatma modu kaydedilemedi; tekrar deneyin"],
+
+
 	"电池与电量": ["Battery & power", "Pil ve güç"],
 	"电池历史": ["Battery history", "Pil geçmişi"],
 	"电池使用时间": ["On battery", "Pilde geçen süre"],
@@ -1398,7 +1410,6 @@ var DASH_I18N = {
 	'未知错误': ['Unknown error', 'Bilinmeyen hata'],
 	'调用失败': ['Request failed', 'İstek başarısız'],
 	'状态暂不可读，请刷新后重试': ['State unavailable; refresh and retry', 'Durum okunamıyor; yenileyip tekrar deneyin'],
-	'查看卡槽已改变，请重新确认操作': ['The viewed SIM changed; confirm the operation again', 'Görüntülenen SIM değişti; işlemi yeniden onaylayın'],
 	'关闭后只停止下次开机回放，已保存的网络、VoLTE 和 VoNR 设置不会被删除。': ['Turning this off only disables boot replay; saved network, VoLTE and VoNR settings are kept.', 'Kapatmak yalnızca açılışta uygulamayı durdurur; ağ, VoLTE ve VoNR ayarları korunur.'],
 	'VoLTE 用于 4G 通话，VoNR 用于 5G SA 通话。设置按当前查看的 SIM 保存，并跟随“开机自动应用”。': ['VoLTE handles 4G calls and VoNR handles 5G SA calls. Settings are saved per viewed SIM and follow Apply at boot.', 'VoLTE 4G, VoNR 5G SA aramaları içindir. Ayarlar görüntülenen SIM için kaydedilir ve açılışta uygulama ayarını izler.'],
 	'关闭 VoLTE 或 VoNR 不等于屏蔽全部来电和短信，传统网络业务仍可能到达。': ['Disabling VoLTE or VoNR does not block every call or SMS; traditional network services may still arrive.', 'VoLTE veya VoNR kapatıldığında tüm aramalar ve SMS engellenmez; geleneksel şebeke hizmetleri ulaşabilir.'],
@@ -2092,6 +2103,29 @@ function fmtUptime(s) {
 
 /* ------------------------------------------------------------------ 样式 */
 var CSS = `
+.mud .mud-home-heading{display:flex;align-items:center;gap:8px;min-width:0}
+.mud .mud-home-heading::before{flex-shrink:0;margin-right:0}
+.mud-home-heading .mud-heading-label{flex:1 1 auto;min-width:0}
+.mud-home-heading .mud-home-progress{flex:0 0 11em;max-width:55%;min-width:0;height:1.4em;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;font-weight:400;letter-spacing:normal;text-align:right;color:var(--text-muted,var(--text-light,#787d85))}
+.mud-home-progress:empty{visibility:hidden}
+.mud-boot-page{display:grid;gap:16px}
+.mud-boot-mode-row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:18px;padding:10px 0 4px}
+.mud-boot-mode-row>b{font-size:.95rem}
+.mud-boot-toggle{display:inline-flex;align-items:center;gap:12px;cursor:pointer;position:relative;font-size:.85rem}
+.mud-boot-toggle input{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important}
+.mud-boot-toggle i{display:inline-block;flex:0 0 38px;width:38px;height:22px;border-radius:12px;background:var(--hairline,var(--border,#ddd));position:relative;transition:background .15s}
+.mud-boot-toggle i::after{content:'';position:absolute;width:16px;height:16px;top:3px;left:3px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .15s}
+.mud-boot-toggle input:checked+i{background:var(--brand,var(--primary,#009d95))}
+.mud-boot-toggle input:checked+i::after{transform:translateX(16px)}
+.mud-boot-toggle input:focus-visible+i{outline:2px solid var(--brand,var(--primary,#009d95));outline-offset:3px}
+.mud-boot-toggle:has(input:disabled){opacity:.55;cursor:default}
+.mud-boot-actions .mud-ctl{margin:0;gap:12px;flex-wrap:wrap}
+.mud-boot-actions .mud-btn{min-height:38px}
+
+/* Bootstrap exposes a different token family. Only activate this bridge when
+ * Aurora's --surface token is absent, so existing Aurora styling wins intact.
+ * Bootstrap's data-darkmode switch updates these aliases without a reload. */
+html.mud-bootstrap-theme{--surface:var(--background-color-high);--surface-sunken:var(--background-color-low);--brand-subtle:color-mix(in srgb,var(--primary-color-high) 10%,var(--background-color-high));--hairline:var(--border-color-low);--text:var(--text-color-high);--text-muted:var(--text-color-medium);--text-subtle:var(--text-color-low);--brand:var(--primary-color-high);--success:var(--success-color-high);--warning:var(--warn-color-high);--danger:var(--error-color-high);--info:var(--primary-color-high);--on-brand:var(--on-primary-color);--hover-faint:var(--background-color-medium)}
 /* Bootstrap exposes a different token family. Only activate this bridge when
  * Aurora's --surface token is absent, so existing Aurora styling wins intact.
  * Bootstrap's data-darkmode switch updates these aliases without a reload. */
@@ -2620,7 +2654,7 @@ function choiceBox(title, message, choices, opts) {
 return baseclass.extend({
 	simSlot: simSlot, simSelector: simSelector, followDataSim: followDataSim,
 	callSimGet: callSimGet, callSimSet: callSimSet, callSimStatus: callSimStatus,
-	callStatus: callStatus, callRates: callRates, callCells: callCells, callSignal: callSignal, callSysinfo: callSysinfo, callAct: callAct, callAt: callAt, callAtHist: callAtHist,
+	callStatus: callStatus, callRates: callRates, callCells: callCells, callSignal: callSignal, callSysinfo: callSysinfo, callBootAct: callBootAct, callAct: callAct, callAt: callAt, callAtHist: callAtHist,
 	callLockGet: callLockGet, callLockFresh: callLockFresh, callLockSet: callLockSet, callLockStatus: callLockStatus, waitLockJob: waitLockJob,
 	callSmsList: callSmsList, callSmsShow: callSmsShow, callSmsSend: callSmsSend,
 	callSmsDel: callSmsDel, callSmsSync: callSmsSync,
